@@ -75,7 +75,9 @@ Then add `"AuraKit"` to your target's dependencies:
 ```swift
 .target(
     name: "YourApp",
-    dependencies: ["AuraKit"]
+    dependencies: [
+        .product(name: "AuraKit", package: "AuraKit")
+    ]
 )
 ```
 
