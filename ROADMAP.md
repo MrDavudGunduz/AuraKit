@@ -1,4 +1,4 @@
-# AuraKit — Master Development Roadmap (V3 · Final Architecture)
+# AuraKit — Master Development Roadmap (V3 · Architecture)
 
 This roadmap targets an **8-week sprint cycle** delivering AuraKit along two parallel tracks:
 

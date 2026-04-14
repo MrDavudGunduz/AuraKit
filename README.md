@@ -188,17 +188,18 @@ See [SECURITY.md](./SECURITY.md) for full details.
 
 ## Documentation
 
-| Document                             | Description                                                  |
-| ------------------------------------ | ------------------------------------------------------------ |
-| [ARCHITECTURE.md](./ARCHITECTURE.md) | Deep dive into Actor model, Ring Buffer, and data flow       |
-| [SECURITY.md](./SECURITY.md)         | Cryptographic design, Secure Enclave, E2EE, Privacy Manifest |
-| [ROADMAP.md](./ROADMAP.md)           | 8-week sprint plan, phase deliverables                       |
-| [CONTRIBUTING.md](./CONTRIBUTING.md) | Contribution guide, PR process, coding standards             |
-| [CHANGELOG.md](./CHANGELOG.md)       | Version history                                              |
+| Document                             | Description                                                                               |
+| ------------------------------------ | ----------------------------------------------------------------------------------------- |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | Deep dive into Actor model, Ring Buffer, and data flow                                    |
+| [SECURITY.md](./SECURITY.md)         | Cryptographic design, Secure Enclave, E2EE, Privacy Manifest                              |
+| [TESTING.md](./TESTING.md)           | Swift Testing guide: `@Suite`, `#expect`, parameterized tests, actor testing, mocking, CI |
+| [ROADMAP.md](./ROADMAP.md)           | 8-week sprint plan, phase deliverables                                                    |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | Contribution guide, PR process, coding standards                                          |
+| [CHANGELOG.md](./CHANGELOG.md)       | Version history                                                                           |
 
 ---
 
 ## License
 
 AuraKit **Core** is released under the [MIT License](./LICENSE).  
-**Aura Intelligence** (Enterprise features) requires a commercial license. Contact [your@email.com] for details.
+**Aura Intelligence** (Enterprise features) requires a commercial license. Contact [davud.gunduz01@gmail.com](mailto:davud.gunduz01@gmail.com) for details.

@@ -141,65 +141,32 @@ protocol SpatialEventEmitting { }
 
 ## Testing Requirements
 
-All new code must include tests. AuraKit uses the **Swift Testing** framework (`import Testing`).
+AuraKit uses the **Swift Testing** framework (`import Testing`). For the complete guide — including `@Suite`, `#expect`/`#require`, parameterized tests, actor testing, `withKnownIssue`, `Confirmation`, mocking strategy, and CI setup — see **[TESTING.md](./TESTING.md)**.
 
-### Test File Structure
+### Mandatory Rules
 
-```
-Tests/AuraKitTests/
-├── Capture/
-│   ├── CaptureActorTests.swift
-│   └── RingBufferTests.swift
-├── Memory/
-│   ├── MemoryActorTests.swift
-│   └── EncryptionTests.swift
-└── Configuration/
-    └── AuraConfigurationTests.swift
-```
+1. **No XCTest** — Use `import Testing` exclusively. `XCTestCase` subclasses will not be accepted.
+2. **Independent tests** — Each `@Test` must be stateless and side-effect-free. Tests run in parallel by default.
+3. **Use `.serialized` sparingly** — Apply `@Suite(..., .serialized)` only when tests share actor-isolated state that cannot be isolated.
+4. **No `sleep()` or `Thread.sleep()`** — Use `Task.sleep(nanoseconds:)` or `ContinuousClock` in async tests.
+5. **No `Date()` or `UUID()` in assertions** — Inject fixed values via `SpatialEventFactory` helpers.
+6. **Naming is a contract** — Test names must read as full sentences: _"RingBuffer overwrites oldest entry when at capacity"_.
 
-### Test Style
+### Minimum Coverage Thresholds
 
-```swift
-import Testing
-@testable import AuraKit
+| Area                                | Minimum |
+| ----------------------------------- | ------- |
+| Public API surface                  | 90%     |
+| Actor state transitions             | 80%     |
+| Encryption / decryption round-trips | 100%    |
+| Error paths                         | 70%     |
 
-@Suite("RingBuffer")
-struct RingBufferTests {
-
-    @Test("overwrites oldest entry when at capacity")
-    func overwritesOnFull() {
-        var buffer = RingBuffer<Int>(capacity: 3)
-        buffer.write(1); buffer.write(2); buffer.write(3)
-        buffer.write(4) // Should overwrite `1`
-        #expect(buffer.read() == 2)
-    }
-
-    @Test("write and read are O(1)")
-    func performanceIsConstant() async throws {
-        var buffer = RingBuffer<Int>(capacity: 10_000)
-        // Verify no allocation growth during writes
-        for i in 0..<10_000 { buffer.write(i) }
-        #expect(buffer.count == 10_000)
-    }
-}
-```
-
-### Coverage Requirements
-
-| Area                              | Minimum Coverage |
-| --------------------------------- | ---------------- |
-| Public API surface                | 90%              |
-| Actor state transitions           | 80%              |
-| Encryption/decryption round-trips | 100%             |
-| Error paths                       | 70%              |
-
-Run coverage report:
+### Running Tests
 
 ```bash
-swift test --enable-code-coverage
-xcrun llvm-cov report .build/debug/AuraKitPackageTests.xctest/Contents/MacOS/AuraKitPackageTests \
-    -instr-profile .build/debug/codecov/default.profdata \
-    -ignore-filename-regex ".build"
+swift test                          # All tests, parallel
+swift test --filter "RingBuffer"    # By suite name
+swift test --enable-code-coverage   # With LCOV report
 ```
 
 ---
