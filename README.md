@@ -147,27 +147,27 @@ try await AuraKit.shared.memory.compressIdleMemories()
 └───────────────────────┬─────────────────────────────┘
                         │  AuraConfiguration (DI)
 ┌───────────────────────▼─────────────────────────────┐
-│                  CaptureActor                        │
+│                  CaptureActor                       │
 │   ┌─────────────────────────────────────────────┐   │
-│   │   Ring Buffer (60fps, N frames, zero leak)   │   │
+│   │   Ring Buffer (60fps, N frames, zero leak)   │  │
 │   └──────────┬──────────────────┬───────────────┘   │
-│              │ Gaze (low weight) │ Touch/Move (1.0)  │
+│              │ Gaze (low weight) │ Touch/Move (1.0) │
 └──────────────┼──────────────────┼───────────────────┘
                │ L1 Enqueue       │ Heuristic Bypass
 ┌──────────────▼──────────────────▼───────────────────┐
-│              IntelligenceActor (Enterprise)          │
+│              IntelligenceActor (Enterprise)         │
 │   MLX LLM Batch Processing → Survival Index Score   │
 └──────────────────────────┬──────────────────────────┘
                            │ Prune / Archive
 ┌──────────────────────────▼──────────────────────────┐
-│              MemoryActor                             │
-│   SwiftData (AES-GCM encrypted, Secure Enclave)      │
-│   RawMemoryNode ◄──────► MemoryArchiveNode           │
+│              MemoryActor                            │
+│   SwiftData (AES-GCM encrypted, Secure Enclave)     │
+│   RawMemoryNode ◄──────► MemoryArchiveNode          │
 └──────────────────────────┬──────────────────────────┘
                            │ CloudKit E2EE
 ┌──────────────────────────▼──────────────────────────┐
-│              Metal Search Layer (Enterprise)         │
-│           GPU Cosine Similarity (Shader)             │
+│              Metal Search Layer (Enterprise)        │
+│           GPU Cosine Similarity (Shader)            │
 └─────────────────────────────────────────────────────┘
 ```
 
