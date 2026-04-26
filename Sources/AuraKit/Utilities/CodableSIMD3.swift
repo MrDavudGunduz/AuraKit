@@ -32,4 +32,16 @@ public struct CodableSIMD3: Sendable, Hashable, Codable {
     self.y = value.y
     self.z = value.z
   }
+
+  /// Creates a `CodableSIMD3` from individual float components.
+  ///
+  /// Convenience initialiser that eliminates the need to construct a
+  /// `SIMD3<Float>` intermediate at call sites.
+  // swiftlint:disable identifier_name
+  public init(x: Float, y: Float, z: Float) {
+    self.x = x
+    self.y = y
+    self.z = z
+  }
+  // swiftlint:enable identifier_name
 }

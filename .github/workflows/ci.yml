@@ -14,10 +14,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # macOS 14 — Xcode 15 / Swift 5.9 (minimum supported)
-          - os: macos-14
-            swift: "5.10"
-          # macOS 15 — Xcode 16 / Swift 6.0 (primary target)
+          # macOS 15 — Xcode 16 / Swift 6.0 (required for swiftLanguageModes: [.v6])
           - os: macos-15
             swift: "6.0"
 

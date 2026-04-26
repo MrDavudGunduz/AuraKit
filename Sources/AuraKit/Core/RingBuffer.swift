@@ -140,8 +140,9 @@ public actor RingBuffer<Element: Sendable> {
       index = (index + 1) % capacity
     }
 
-    // Atomic reset — single state mutation instead of n individual dequeues.
-    storage = [Element?](repeating: nil, count: capacity)
+    // Atomic reset — clear slots in-place to honour the zero-heap-growth contract.
+    // No new array allocation; the backing storage retains its original buffer.
+    for idx in 0..<capacity { storage[idx] = nil }
     head = 0
     tail = 0
     _count = 0

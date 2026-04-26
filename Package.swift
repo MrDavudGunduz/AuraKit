@@ -29,6 +29,9 @@ let package = Package(
       name: "AuraKit",
       dependencies: [],
       path: "Sources/AuraKit",
+      resources: [
+        .process("PrivacyInfo.xcprivacy")
+      ],
       plugins: [
         .plugin(name: "SwiftLintBuildToolPlugin", package: "SwiftLint")
       ]

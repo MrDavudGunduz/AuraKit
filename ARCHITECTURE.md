@@ -63,20 +63,31 @@ AuraKit is built on a **strict Actor-isolation model** enforced by Swift 6's Str
 **Responsibility:** Accept raw spatial events from the host application and route them based on heuristic classification.
 
 ```swift
-actor CaptureActor {
+public actor CaptureActor {
     private let config: AuraConfiguration
-    private var ringBuffer: RingBuffer<SpatialEvent>
+    private let buffer: RingBuffer<SpatialEvent>
+    private let router: HeuristicRouter
+    private let store: any SpatialEventStore
 
-    func record(event: SpatialEvent) async {
-        switch event.type {
-        case .gaze:
-            // Enqueue to L1 buffer with configured low weight
-            ringBuffer.write(event.scored(weight: config.gazeWeight))
+    public func record(event: SpatialEvent) async {
+        let decision = router.route(event, config: config)
 
-        case .touch, .move:
-            // Heuristic Bypass: score = 1.0, skip LLM, go directly to MemoryActor
-            let scored = event.scored(weight: 1.0)
-            await MemoryActor.shared.persist(scored)
+        let score: Float
+        switch decision {
+        case .directStore(let routedScore): score = routedScore
+        case .enqueueBuffer(let routedScore): score = routedScore
+        }
+
+        let scored = SpatialEvent(
+            id: event.id, timestamp: event.timestamp,
+            kind: event.kind, score: score
+        )
+
+        switch decision {
+        case .directStore:
+            await store.append(scored)      // High-signal → persistent memory
+        case .enqueueBuffer:
+            await buffer.enqueue(scored)    // Low-signal → L1 ring buffer
         }
     }
 }
@@ -183,29 +194,25 @@ final class MemoryArchiveNode {
 AuraKit uses a **value-type configuration** injected at startup. There are no singletons with mutable global state.
 
 ```swift
-public struct AuraConfiguration: Sendable {
+public struct AuraConfiguration: Sendable, Equatable {
     /// Weight applied to passive gaze events (0.0–1.0).
-    public var gazeWeight: Double
+    public let gazeWeight: Float
 
     /// Weight applied to active interactions. Bypasses LLM (always 1.0 by default).
-    public var interactionWeight: Double
+    public let interactionWeight: Float
 
     /// Maximum number of frames the Ring Buffer holds before overwrite.
-    public var bufferCapacity: Int
+    public let bufferCapacity: Int
 
-    /// Survival Index decay constant λ. Higher = faster memory decay.
-    public var decayConstant: Double
-
-    /// SI threshold below which memories are eligible for pruning.
-    public var pruningThreshold: Double
+    /// Maximum events the MemoryStore retains (FIFO eviction at cap).
+    public let storeCapacity: Int
 
     public init(
-        gazeWeight: Double = 0.3,
-        interactionWeight: Double = 1.0,
+        interactionWeight: Float = 1.0,
+        gazeWeight: Float = 0.3,
         bufferCapacity: Int = 512,
-        decayConstant: Double = 0.001,
-        pruningThreshold: Double = 0.1
-    ) { ... }
+        storeCapacity: Int = 10_000
+    ) throws { ... }
 }
 ```
 

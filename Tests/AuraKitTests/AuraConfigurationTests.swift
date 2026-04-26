@@ -164,4 +164,46 @@ struct AuraConfigurationTests {
     let b = try AuraConfiguration(gazeWeight: 0.5)
     #expect(a != b)
   }
+
+  // MARK: - Float Special Values
+
+  @Test("NaN interactionWeight throws invalidConfiguration")
+  func testNaNInteractionWeight() {
+    #expect {
+      try AuraConfiguration(interactionWeight: .nan)
+    } throws: { error in
+      guard case AuraError.invalidConfiguration(let reason) = error else { return false }
+      return reason.contains("interactionWeight")
+    }
+  }
+
+  @Test("NaN gazeWeight throws invalidConfiguration")
+  func testNaNGazeWeight() {
+    #expect {
+      try AuraConfiguration(gazeWeight: .nan)
+    } throws: { error in
+      guard case AuraError.invalidConfiguration(let reason) = error else { return false }
+      return reason.contains("gazeWeight")
+    }
+  }
+
+  @Test("Infinity interactionWeight throws invalidConfiguration")
+  func testInfinityInteractionWeight() {
+    #expect {
+      try AuraConfiguration(interactionWeight: .infinity)
+    } throws: { error in
+      guard case AuraError.invalidConfiguration(let reason) = error else { return false }
+      return reason.contains("interactionWeight")
+    }
+  }
+
+  @Test("Negative infinity gazeWeight throws invalidConfiguration")
+  func testNegativeInfinityGazeWeight() {
+    #expect {
+      try AuraConfiguration(gazeWeight: -.infinity)
+    } throws: { error in
+      guard case AuraError.invalidConfiguration(let reason) = error else { return false }
+      return reason.contains("gazeWeight")
+    }
+  }
 }

@@ -99,23 +99,25 @@ public actor CaptureActor {
   public func record(event: SpatialEvent) async {
     let decision = router.route(event, config: config)
 
+    // Extract score from the routing decision and build the scored event once.
+    let score: Float
     switch decision {
-    case .directStore(let score):
-      let scored = SpatialEvent(
-        id: event.id,
-        timestamp: event.timestamp,
-        kind: event.kind,
-        score: score
-      )
-      await store.append(scored)
+    case .directStore(let routedScore): score = routedScore
+    case .enqueueBuffer(let routedScore): score = routedScore
+    }
 
-    case .enqueueBuffer(let score):
-      let scored = SpatialEvent(
-        id: event.id,
-        timestamp: event.timestamp,
-        kind: event.kind,
-        score: score
-      )
+    let scored = SpatialEvent(
+      id: event.id,
+      timestamp: event.timestamp,
+      kind: event.kind,
+      score: score
+    )
+
+    // Route to the appropriate destination.
+    switch decision {
+    case .directStore:
+      await store.append(scored)
+    case .enqueueBuffer:
       await buffer.enqueue(scored)
     }
   }

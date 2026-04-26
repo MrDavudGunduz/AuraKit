@@ -24,6 +24,12 @@ import Foundation
 /// write — the same ring semantics used by the L1 ``RingBuffer``. Set `capacity`
 /// to `0` to disable eviction (unbounded growth — not recommended for production).
 ///
+/// ## Performance
+///
+/// Both `append` and eviction are **O(1)** operations. The backing storage
+/// uses a pre-allocated circular array with modular indexing — no element
+/// shifting, no dynamic resizing after initialisation.
+///
 /// ## Protocol Conformance
 ///
 /// `MemoryStore` conforms to ``SpatialEventStore``. `CaptureActor` depends on
@@ -38,11 +44,20 @@ public actor MemoryStore: SpatialEventStore {
 
   // MARK: - State
 
-  /// The ordered log of all high-signal events received since initialization.
-  private var events: [SpatialEvent] = []
+  /// Pre-allocated fixed-size circular storage (bounded mode) or dynamic array (unbounded).
+  private var storage: [SpatialEvent?]
+
+  /// Index at which the next write will occur (bounded mode).
+  private var writeIndex: Int = 0
+
+  /// Number of valid elements currently stored.
+  private var _count: Int = 0
 
   /// Maximum number of events retained. `0` means unbounded.
   private let capacity: Int
+
+  /// Whether this store operates in bounded (ring) mode.
+  private var isBounded: Bool { capacity > 0 }
 
   // MARK: - Init
 
@@ -52,22 +67,32 @@ public actor MemoryStore: SpatialEventStore {
   ///   kicks in. Pass `0` for unbounded (defaults to
   ///   ``AuraConfiguration/defaultStoreCapacity``).
   public init(capacity: Int = AuraConfiguration.defaultStoreCapacity) {
-    self.capacity = max(0, capacity)
+    let safeCapacity = max(0, capacity)
+    self.capacity = safeCapacity
+    // Pre-allocate full capacity for bounded mode; empty for unbounded.
+    self.storage = safeCapacity > 0
+      ? [SpatialEvent?](repeating: nil, count: safeCapacity)
+      : []
   }
 
   // MARK: - Mutations
 
   /// Appends a high-signal event to the persistent memory log.
   ///
-  /// If the store has reached `capacity`, the oldest event is evicted
-  /// before the new one is appended — maintaining a constant memory footprint.
+  /// In bounded mode, the oldest event is silently overwritten when full
+  /// — O(1) via circular indexing. In unbounded mode, events are simply
+  /// appended to the backing array.
   ///
   /// - Parameter event: The ``SpatialEvent`` to persist.
   public func append(_ event: SpatialEvent) {
-    if capacity > 0 && events.count >= capacity {
-      events.removeFirst()
+    if isBounded {
+      storage[writeIndex] = event
+      writeIndex = (writeIndex + 1) % capacity
+      if _count < capacity { _count += 1 }
+    } else {
+      storage.append(event)
+      _count += 1
     }
-    events.append(event)
   }
 
   // MARK: - Reads
@@ -79,12 +104,26 @@ public actor MemoryStore: SpatialEventStore {
   ///
   /// - Returns: All stored ``SpatialEvent`` values, oldest first.
   public func allEvents() -> [SpatialEvent] {
-    events
+    if isBounded {
+      guard _count > 0 else { return [] }
+      var result = [SpatialEvent]()
+      result.reserveCapacity(_count)
+      let head = _count == capacity ? writeIndex : 0
+      for idx in 0..<_count {
+        let index = (head + idx) % capacity
+        if let event = storage[index] {
+          result.append(event)
+        }
+      }
+      return result
+    } else {
+      return storage.compactMap { $0 }
+    }
   }
 
   /// The total number of events currently in the store.
   public var count: Int {
-    events.count
+    _count
   }
 
   /// Removes all events from the store.
@@ -93,6 +132,13 @@ public actor MemoryStore: SpatialEventStore {
   ///   SwiftData backing store will require an explicit migration step before
   ///   calling this method in production code.
   public func clear() {
-    events.removeAll(keepingCapacity: true)
+    if isBounded {
+      for idx in 0..<capacity { storage[idx] = nil }
+      writeIndex = 0
+    } else {
+      storage.removeAll(keepingCapacity: true)
+    }
+    _count = 0
   }
 }
+

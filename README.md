@@ -96,27 +96,30 @@ Then add `"AuraKit"` to your target's dependencies:
 ```swift
 import AuraKit
 
-// Configure once at app launch (e.g., App.init or AppDelegate)
-let config = AuraConfiguration(
+// Configure once at app launch from a @MainActor context
+// (e.g., .task modifier on your root WindowGroup).
+let config = try AuraConfiguration(
     interactionWeight: 1.0,   // Touch/Move → bypasses LLM, goes directly to persistent store
     gazeWeight: 0.3,          // Passive gaze → low-weight L1 buffer
     bufferCapacity: 512       // Ring Buffer frame capacity
 )
 
-await AuraKit.shared.configure(with: config)
+AuraKit.shared.configure(with: config)
 ```
 
 ### 2. Capture Spatial Events
 
 ```swift
+let capture = try AuraKit.shared.capture()
+
 // Feed raycast/gaze data — fully async, Actor-isolated, main-thread safe
-await AuraKit.shared.capture.record(
-    event: .gaze(position: simd_float3(x: 0.5, y: 1.2, z: -0.8))
+await capture.record(
+    event: SpatialEvent(kind: .gaze(rawPosition: SIMD3(0.5, 1.2, -0.8)), score: 0)
 )
 
 // Touch/Move events bypass the LLM filter and score 1.0 automatically
-await AuraKit.shared.capture.record(
-    event: .interaction(type: .touch, position: simd_float3(x: 0.1, y: 0.9, z: -1.0))
+await capture.record(
+    event: SpatialEvent(kind: .interaction(type: .touch, rawPosition: SIMD3(0.1, 0.9, -1.0)), score: 0)
 )
 ```
 

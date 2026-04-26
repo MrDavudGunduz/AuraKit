@@ -171,4 +171,28 @@ struct RingBufferTests {
     #expect(peeked.count == 3)
     #expect(await buffer.count == 3)  // Must not have been drained
   }
+
+  // MARK: - Defensive Edge Cases
+
+  @Test("capacity 0 is coerced to 1 — enqueue and dequeue still work")
+  func testCapacityZeroCoercion() async {
+    // RingBuffer coerces capacity 0 → 1 to prevent division-by-zero.
+    let buffer = RingBuffer<SpatialEvent>(capacity: 0)
+    #expect(await buffer.capacity == 1)
+
+    let event = SpatialEvent.gazeFixture()
+    await buffer.enqueue(event)
+    #expect(await buffer.count == 1)
+    #expect(await buffer.isFull)
+
+    let dequeued = await buffer.dequeue()
+    #expect(dequeued?.id == event.id)
+    #expect(await buffer.isEmpty)
+  }
+
+  @Test("Negative capacity is coerced to 1")
+  func testNegativeCapacityCoercion() async {
+    let buffer = RingBuffer<SpatialEvent>(capacity: -10)
+    #expect(await buffer.capacity == 1)
+  }
 }
