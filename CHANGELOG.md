@@ -16,6 +16,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Project scaffold: Swift Package with Swift 6 Strict Concurrency and multi-platform support (iOS 17+, macOS 14+, visionOS 1+)
 - SwiftLint build plugin integrated as a compile-time code quality gate
 - DocC plugin added for professional API documentation generation
+- `LICENSE` file: MIT license added to repository root (legal compliance)
+- `AuraKit.isConfigured`: lightweight state inspection property — avoids the overhead of catching `AuraError.notConfigured` from `capture()`
+- `SpatialEvent.score` default value: `score` parameter now defaults to `0` — callers no longer pass a meaningless score that is always overwritten by `HeuristicRouter`
+
+### Changed
+
+- `CaptureActor.init`: auto-constructs `MemoryStore` from `config.storeCapacity` when no explicit store is injected — eliminates capacity inconsistency when using direct `CaptureActor` construction
+- `AuraKit.configure(with:)`: simplified to delegate `MemoryStore` construction to `CaptureActor` (single source of truth for store capacity)
+- `AuraKit.reset()`: now emits `Logger.info` when tearing down an active pipeline for diagnostics
+- `RingBuffer.drainAll()`: merged slot-clearing into the read pass — O(count) instead of O(capacity) for sparse buffers
+
+### Improved
+
+- `.gitignore`: added `Package.resolved` (SPM library best practice), recursive `.DS_Store` matching, additional IDE state exclusions
+- CI pipeline: added release build step, coverage artifact upload (txt + lcov), DocC generation step, `Package.swift`-based cache key
+- Test suite: added `isConfigured` lifecycle tests (3), store capacity consistency test, default score rescore test (5 new tests → 83 total)
 
 ---
 
@@ -71,5 +87,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/yourusername/AuraKit/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/yourusername/AuraKit/releases/tag/v1.0.0
+[Unreleased]: https://github.com/MrDavudGunduz/AuraKit/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/MrDavudGunduz/AuraKit/releases/tag/v1.0.0
