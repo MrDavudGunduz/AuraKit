@@ -73,11 +73,13 @@ public actor CaptureActor {
   ///   - config: The active ``AuraConfiguration``. Captured at init and
   ///     immutable for the lifetime of this actor.
   ///   - store: The backing ``SpatialEventStore`` for high-signal events.
-  ///     Defaults to a new in-memory ``MemoryStore``. Inject a Phase 2
+  ///     When omitted, a new ``MemoryStore`` is created using
+  ///     `config.storeCapacity` — ensuring capacity consistency between
+  ///     the configuration and the store. Inject a Phase 2
   ///     `EncryptedSwiftDataStore` for production persistence.
-  public init(config: AuraConfiguration, store: some SpatialEventStore = MemoryStore()) {
+  public init(config: AuraConfiguration, store: (any SpatialEventStore)? = nil) {
     self.config = config
-    self.store = store
+    self.store = store ?? MemoryStore(capacity: config.storeCapacity)
     self.buffer = RingBuffer<SpatialEvent>(capacity: config.bufferCapacity)
     self.router = HeuristicRouter()
   }
@@ -99,25 +101,18 @@ public actor CaptureActor {
   public func record(event: SpatialEvent) async {
     let decision = router.route(event, config: config)
 
-    // Extract score from the routing decision and build the scored event once.
-    let score: Float
+    // Single-pass: extract score, build the scored event, and route — no redundant branching.
     switch decision {
-    case .directStore(let routedScore): score = routedScore
-    case .enqueueBuffer(let routedScore): score = routedScore
-    }
-
-    let scored = SpatialEvent(
-      id: event.id,
-      timestamp: event.timestamp,
-      kind: event.kind,
-      score: score
-    )
-
-    // Route to the appropriate destination.
-    switch decision {
-    case .directStore:
+    case .directStore(let score):
+      let scored = SpatialEvent(
+        id: event.id, timestamp: event.timestamp, kind: event.kind, score: score
+      )
       await store.append(scored)
-    case .enqueueBuffer:
+
+    case .enqueueBuffer(let score):
+      let scored = SpatialEvent(
+        id: event.id, timestamp: event.timestamp, kind: event.kind, score: score
+      )
       await buffer.enqueue(scored)
     }
   }
