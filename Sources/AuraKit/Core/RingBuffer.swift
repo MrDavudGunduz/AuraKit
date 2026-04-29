@@ -137,12 +137,12 @@ public actor RingBuffer<Element: Sendable> {
       if let element = storage[index] {
         result.append(element)
       }
+      // Clear the slot in the same pass — avoids a separate O(capacity) loop.
+      storage[index] = nil
       index = (index + 1) % capacity
     }
 
-    // Atomic reset — clear slots in-place to honour the zero-heap-growth contract.
-    // No new array allocation; the backing storage retains its original buffer.
-    for idx in 0..<capacity { storage[idx] = nil }
+    // Reset head/tail pointers — the backing storage retains its allocation.
     head = 0
     tail = 0
     _count = 0
