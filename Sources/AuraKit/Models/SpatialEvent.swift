@@ -136,12 +136,14 @@ public struct SpatialEvent: Identifiable, Sendable, Hashable, Codable {
   ///   - id: Defaults to a new `UUID()` if not provided.
   ///   - timestamp: Defaults to `Date()` (now) if not provided.
   ///   - kind: The event classification and spatial payload.
-  ///   - score: The heuristic score assigned by the router.
+  ///   - score: The heuristic score assigned by the router. Defaults to `0`
+  ///     because ``HeuristicRouter`` overwrites this value at ingestion time.
+  ///     External callers should typically omit this parameter.
   public init(
     id: UUID = UUID(),
     timestamp: Date = Date(),
     kind: SpatialEventKind,
-    score: Float
+    score: Float = 0
   ) {
     self.id = id
     self.timestamp = timestamp
