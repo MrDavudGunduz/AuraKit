@@ -190,10 +190,7 @@ public final class AuraKit {
       )
       return
     }
-    _capture = CaptureActor(
-      config: config,
-      store: MemoryStore(capacity: config.storeCapacity)
-    )
+    _capture = CaptureActor(config: config)
   }
 
   /// Convenience throwing overload — constructs an ``AuraConfiguration`` from
@@ -234,12 +231,25 @@ public final class AuraKit {
     return capture
   }
 
+  /// Whether `configure(with:)` has been called and the pipeline is active.
+  ///
+  /// Use this for guard-style checks where catching `AuraError.notConfigured`
+  /// from ``capture()`` would be unnecessarily heavy.
+  public var isConfigured: Bool {
+    _capture != nil
+  }
+
   /// Tears down the current configuration, allowing ``configure(with:)`` to
   /// be called again.
   ///
   /// - Warning: This discards the current ``CaptureActor`` and all in-flight
   ///   events. Intended for use in unit tests only — do not call in production.
+  ///   If in-flight buffered events exist at teardown time, a fault-level log
+  ///   is emitted for diagnostics.
   public func reset() {
+    if _capture != nil {
+      AuraKit.logger.info("[AuraKit] reset() — tearing down capture pipeline.")
+    }
     _capture = nil
   }
 
