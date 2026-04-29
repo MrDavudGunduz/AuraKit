@@ -172,4 +172,41 @@ struct CaptureActorTests {
     #expect(buffered == 8, "8 gaze events should be buffered")
     #expect(persisted == 4, "4 touch events should be persisted")
   }
+
+  // MARK: - Store Capacity Consistency
+
+  @Test("CaptureActor respects config.storeCapacity for auto-created MemoryStore")
+  func testStoreCapacityFromConfig() async throws {
+    let storeCapacity = 5
+    let config = try AuraConfiguration(
+      bufferCapacity: 64,
+      storeCapacity: storeCapacity
+    )
+    let actor = CaptureActor(config: config)
+
+    // Record more events than the store capacity
+    for _ in 0..<10 {
+      await actor.record(event: .touchFixture())
+    }
+
+    let persisted = await actor.persistedEventCount
+    #expect(
+      persisted == storeCapacity,
+      "Store should cap at config.storeCapacity (\(storeCapacity)), got \(persisted)"
+    )
+  }
+
+  // MARK: - Default Score
+
+  @Test("SpatialEvent with default score (0) is correctly rescored by router")
+  func testDefaultScoreOverwrittenByRouter() async throws {
+    let actor = try makeCaptureActor(interactionWeight: 0.75)
+
+    // Use default score (0) — router should overwrite to interactionWeight
+    let event = SpatialEvent(kind: .interaction(type: .touch, position: .zero))
+    await actor.record(event: event)
+
+    let persisted = await actor.persistedEvents()
+    #expect(persisted.first?.score == 0.75)
+  }
 }

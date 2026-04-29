@@ -120,4 +120,38 @@ struct AuraKitSmokeTests {
       try instance.capture()
     }
   }
+
+  // MARK: - isConfigured
+
+  @Test("isConfigured is false before configure(with:) is called")
+  func testIsConfiguredBeforeConfigure() {
+    let instance = AuraKit.shared
+    instance.reset()
+    #expect(!instance.isConfigured)
+  }
+
+  @Test("isConfigured is true after configure(with:) is called")
+  func testIsConfiguredAfterConfigure() throws {
+    let instance = AuraKit.shared
+    instance.reset()
+
+    let config = try AuraConfiguration()
+    instance.configure(with: config)
+    #expect(instance.isConfigured)
+
+    instance.reset()  // Teardown
+  }
+
+  @Test("isConfigured returns to false after reset()")
+  func testIsConfiguredAfterReset() throws {
+    let instance = AuraKit.shared
+    instance.reset()
+
+    let config = try AuraConfiguration()
+    instance.configure(with: config)
+    #expect(instance.isConfigured)
+
+    instance.reset()
+    #expect(!instance.isConfigured)
+  }
 }
