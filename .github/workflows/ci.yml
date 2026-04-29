@@ -31,12 +31,55 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .build
-          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.swift') }}
           restore-keys: |
             ${{ runner.os }}-spm-
+
+      # ── Build ────────────────────────────────────────────────────────────
 
       - name: Build (debug)
         run: swift build -c debug
 
+      - name: Build (release)
+        run: swift build -c release
+
+      # ── Test ─────────────────────────────────────────────────────────────
+
       - name: Test (parallel)
         run: swift test --parallel
+
+      - name: Test with Thread Sanitizer
+        run: swift test --sanitize=thread
+
+      # ── Code Coverage ───────────────────────────────────────────────────
+
+      - name: Generate Code Coverage
+        run: |
+          swift test --enable-code-coverage
+          PROFDATA=$(find .build -name 'default.profdata' -type f | head -1)
+          TEST_BIN=$(find .build -name 'AuraKitPackageTests' -type f | head -1)
+          if [ -n "$PROFDATA" ] && [ -n "$TEST_BIN" ]; then
+            xcrun llvm-cov report "$TEST_BIN" -instr-profile "$PROFDATA" \
+              -ignore-filename-regex='\.build|Tests' | tee coverage-report.txt
+            xcrun llvm-cov export "$TEST_BIN" -instr-profile "$PROFDATA" \
+              -ignore-filename-regex='\.build|Tests' -format=lcov > coverage.lcov
+          fi
+
+      - name: Upload Coverage Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-coverage-${{ matrix.os }}
+          path: |
+            coverage-report.txt
+            coverage.lcov
+          retention-days: 30
+
+      # ── Documentation ───────────────────────────────────────────────────
+
+      - name: Generate DocC Documentation
+        run: |
+          swift package generate-documentation \
+            --target AuraKit \
+            --disable-indexing \
+            --output-path .build/docs 2>&1 || true
