@@ -7,6 +7,7 @@
 // conforming to the same SpatialEventStore protocol.
 
 import Foundation
+import os.log
 
 // MARK: - MemoryStore
 
@@ -42,6 +43,13 @@ import Foundation
 /// through Swift's actor runtime — no locks, no data races.
 public actor MemoryStore: SpatialEventStore {
 
+  // MARK: - Internal Logger
+
+  private static let logger = Logger(
+    subsystem: "com.aurakit.framework",
+    category: "MemoryStore"
+  )
+
   // MARK: - State
 
   /// Pre-allocated fixed-size circular storage (bounded mode) or dynamic array (unbounded).
@@ -66,9 +74,24 @@ public actor MemoryStore: SpatialEventStore {
   /// - Parameter capacity: Maximum event count before oldest-first eviction
   ///   kicks in. Pass `0` for unbounded (defaults to
   ///   ``AuraConfiguration/defaultStoreCapacity``).
+  ///
+  /// - Warning: Passing `0` disables eviction. In long-running visionOS sessions
+  ///   this can lead to unbounded memory growth and eventual OOM termination.
+  ///   A fault-level log is emitted to the unified logging system when this occurs.
   public init(capacity: Int = AuraConfiguration.defaultStoreCapacity) {
     let safeCapacity = max(0, capacity)
     self.capacity = safeCapacity
+
+    if safeCapacity == 0 {
+      MemoryStore.logger.fault(
+        """
+        [AuraKit] MemoryStore initialised with capacity 0 (unbounded mode). \
+        This disables FIFO eviction and may cause OOM termination in long-running \
+        sessions. Use a positive capacity for production deployments.
+        """
+      )
+    }
+
     // Pre-allocate full capacity for bounded mode; empty for unbounded.
     self.storage = safeCapacity > 0
       ? [SpatialEvent?](repeating: nil, count: safeCapacity)

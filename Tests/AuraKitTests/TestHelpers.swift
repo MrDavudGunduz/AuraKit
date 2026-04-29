@@ -49,8 +49,6 @@ extension SpatialEvent {
 // MARK: - CodableSIMD3 Convenience
 
 extension CodableSIMD3 {
-  /// World-space origin `(0, 0, 0)`.
-  static let zero = CodableSIMD3(SIMD3<Float>(0, 0, 0))
 
   /// Convenience for a named spatial position in tests.
   static func make(_ x: Float, _ y: Float, _ z: Float) -> CodableSIMD3 {

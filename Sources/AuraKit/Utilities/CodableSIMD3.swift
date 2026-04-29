@@ -45,3 +45,14 @@ public struct CodableSIMD3: Sendable, Hashable, Codable {
   }
   // swiftlint:enable identifier_name
 }
+
+// MARK: - Common Constants
+
+extension CodableSIMD3 {
+
+  /// The world-space origin `(0, 0, 0)`.
+  ///
+  /// Convenience constant for the most common 3D position. Eliminates the
+  /// boilerplate of wrapping `SIMD3<Float>(0, 0, 0)` at every call site.
+  public static let zero = CodableSIMD3(SIMD3<Float>(0, 0, 0))
+}
