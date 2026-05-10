@@ -194,6 +194,22 @@ As required by App Store Review Guidelines (updated 2024), AuraKit includes a `P
                 <string>CA92.1</string> <!-- Framework configuration storage -->
             </array>
         </dict>
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>C617.1</string> <!-- SwiftData/SQLite store management -->
+            </array>
+        </dict>
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>E174.1</string> <!-- SwiftData storage capacity checks -->
+            </array>
+        </dict>
     </array>
 </dict>
 </plist>

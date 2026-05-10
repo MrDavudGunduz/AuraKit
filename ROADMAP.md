@@ -275,7 +275,7 @@ AuraIntelligence (Private, Enterprise)
 | Phase                   | Weeks | Track           | Status  | Key Output                                                 |
 | ----------------------- | ----- | --------------- | ------- | ---------------------------------------------------------- |
 | 1 · Capture Engine      | 1–2   | Core            | ✅ Done | `CaptureActor`, `RingBuffer`, `AuraConfiguration`          |
-| 2 · Encrypted Storage   | 3–4   | Core + Security | 🔜 Next | SwiftData schema, AES-GCM, CloudKit E2EE, Privacy Manifest |
+| 2 · Encrypted Storage   | 3–4   | Core + Security | ✅ Done | SwiftData schema, AES-GCM, CloudKit E2EE, Privacy Manifest |
 | 3 · On-Device LLM       | 5–6   | Enterprise      | ⏳      | `IntelligenceActor`, MLX sandbox, Survival Index           |
 | 4 · Compression API     | 7     | Enterprise      | ⏳      | Semantic consolidation, IoC `compressIdleMemories()`       |
 | 5 · Profiling + Release | 8     | All             | ⏳      | Metal shaders, Instruments report, SPM open-source release |

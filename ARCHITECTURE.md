@@ -11,24 +11,23 @@ AuraKit is built on a **strict Actor-isolation model** enforced by Swift 6's Str
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │                        Host Application                          │
-│              (Game, AR App, Spatial Computing App)               │
+│              (Game, AR App, Spatial Computing App)                │
 └─────────────────────────────┬────────────────────────────────────┘
-                              │  AuraConfiguration (DI)
-                              │  AuraKit.shared (entry point)
+                              │ SpatialEvent
 ┌─────────────────────────────▼────────────────────────────────────┐
-│                         LAYER 1: CAPTURE                         │
-│                        CaptureActor                              │
+│                     LAYER 1: CAPTURE                             │
+│                      CaptureActor                                │
 │  ┌───────────────────────────────────────────────────────────┐   │
-│  │              RingBuffer<SpatialEvent>                     │   │
+│  │             RingBuffer<SpatialEvent>                       │   │
 │  │    Fixed capacity · Zero Allocation · Thread-safe         │   │
-│  └────────────┬──────────────────────────┬────────────────── ┘   │
-│               │ .gaze (low weight)        │ .touch/.move (1.0)    │
-│               │ → L1 enqueue              │ → Heuristic Bypass    │
-└───────────────┼───────────────────────── ┼──────────────────────┘
-                │                           │
-┌───────────────▼───────────────────────── ▼──────────────────────┐
+│  └────────────┬──────────────────────────┬───────────────────┘   │
+│               │ .gaze (low weight)       │ .touch/.move (1.0)    │
+│               │ → L1 enqueue             │ → Heuristic Bypass    │
+└───────────────┼──────────────────────────┼───────────────────────┘
+                │                          │
+┌───────────────▼──────────────────────────▼───────────────────────┐
 │                     LAYER 2: INTELLIGENCE                        │
-│                  IntelligenceActor (Enterprise)                  │
+│                  IntelligenceActor (Enterprise)                   │
 │  ┌───────────────────────────────────────────────────────────┐   │
 │  │   MLX LLM Sandbox (network-isolated · Apple Silicon)      │   │
 │  │   Batch inference → Survival Index scoring                │   │
@@ -39,18 +38,20 @@ AuraKit is built on a **strict Actor-isolation model** enforced by Swift 6's Str
                                 │ Prune / Persist
 ┌───────────────────────────────▼──────────────────────────────────┐
 │                      LAYER 3: MEMORY                             │
-│                          MemoryActor                             │
+│              SpatialEventStore (Protocol)                         │
 │  ┌───────────────────────────────────────────────────────────┐   │
-│  │   SwiftData Store (AES-GCM · Secure Enclave keys)         │   │
-│  │   RawMemoryNode  ◄──────────►  MemoryArchiveNode          │   │
+│  │  MemoryStore (Phase 1 — in-memory, test/dev)              │   │
+│  │  EncryptedMemoryStore (Phase 2 — AES-GCM, production)     │   │
+│  │    SwiftData + Secure Enclave keys + Keychain             │   │
+│  │    RawMemoryNode  ◄──────────►  MemoryArchiveNode         │   │
 │  └────────────────────────────┬──────────────────────────────┘   │
 │                               │ CloudKit E2EE                    │
 └───────────────────────────────┼──────────────────────────────────┘
                                 │
 ┌───────────────────────────────▼──────────────────────────────────┐
 │                       LAYER 4: SEARCH                            │
-│                     Metal Search Layer (Enterprise)              │
-│          GPU Cosine Similarity via MTLComputePipelineState       │
+│                     Metal Search Layer (Enterprise)               │
+│          GPU Cosine Similarity via MTLComputePipelineState        │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -72,7 +73,7 @@ public actor CaptureActor {
     public func record(event: SpatialEvent) async {
         let decision = router.route(event, config: config)
 
-        let score: Float
+        let score: Double
         switch decision {
         case .directStore(let routedScore): score = routedScore
         case .enqueueBuffer(let routedScore): score = routedScore
@@ -143,18 +144,55 @@ actor IntelligenceActor {
 
 ---
 
-### `MemoryActor`
+### `EncryptedMemoryStore` (Phase 2 Production Store)
 
-**Responsibility:** Persist `RawMemoryNode` and `MemoryArchiveNode` objects to the encrypted SwiftData store, and expose the IoC compression API.
+**Responsibility:** Encrypt and persist `RawMemoryNode` objects to SwiftData, expose paginated queries, and track recall counters for the Survival Index formula.
+
+```swift
+public actor EncryptedMemoryStore: SpatialEventStore {
+    private let modelContext: ModelContext      // autosaveEnabled = false
+    private let keyManager: KeyManager
+    private let encryptionService: EncryptionService
+}
+```
 
 Key methods:
 
-| Method                            | Description                                                       |
-| --------------------------------- | ----------------------------------------------------------------- |
-| `persist(_ event: ScoredEvent)`   | Encrypt and write a `RawMemoryNode`                               |
-| `query(context:limit:)`           | Retrieve top-N memories via Metal cosine search                   |
-| `compressIdleMemories()`          | Enterprise IoC: consolidate low-SI nodes into `MemoryArchiveNode` |
-| `delete(below threshold: Double)` | Prune nodes below Survival Index threshold                        |
+| Method                                  | Description                                                       |
+| --------------------------------------- | ----------------------------------------------------------------- |
+| `append(_ event: SpatialEvent)`         | Encrypt → `RawMemoryNode` → SwiftData                            |
+| `allEvents()`                           | **Pure read** — full-table decrypt, no side effects               |
+| `events(limit:offset:)`                 | **Pure read** — paginated decrypt, prevents OOM                   |
+| `recallAndFetchAll()`                   | Full-table decrypt **+ recalled++** (Survival Index)              |
+| `recallAndFetch(limit:offset:)`         | Paginated decrypt **+ recalled++**                                |
+| `events(limit:offset:)`                 | Paginated decrypt — prevents OOM on large stores                  |
+| `fetchNodeCount(eventType:)`            | Metadata-only count (no decrypt)                                  |
+| `recalledCount(for: UUID)`              | Sendable-safe recalled counter projection                         |
+| `deleteNodes(belowScore:)`              | Prune nodes below Survival Index threshold                        |
+| `clear()`                               | Test-only: delete all nodes                                       |
+
+**Design decisions:**
+
+- `autosaveEnabled = false` — explicit `save()` calls prevent duplicate-write race conditions
+- **Read/write separation**: `allEvents()` and `events(limit:offset:)` are pure reads. Use `recallAndFetchAll()` / `recallAndFetch(limit:offset:)` to explicitly increment recalled for SI(t) = S₀ · Rⁿ · e^(-λt)
+- Failed decryptions are logged and skipped — corrupted nodes never crash the pipeline
+
+---
+
+### `SpatialEventStore` Protocol
+
+```swift
+public protocol SpatialEventStore: Actor {
+    func append(_ event: SpatialEvent) async
+    func allEvents() async -> [SpatialEvent]
+    var count: Int { get async }
+}
+```
+
+**Conforming types:**
+
+- `MemoryStore` — Phase 1 in-memory store (tests, prototyping)
+- `EncryptedMemoryStore` — Phase 2 AES-GCM encrypted SwiftData store (production)
 
 ---
 
@@ -166,11 +204,11 @@ Key methods:
 @Model
 final class RawMemoryNode {
     @Attribute(.unique) var id: UUID
-    var encryptedPayload: Data       // AES-GCM ciphertext (never stored as plaintext)
+    var encryptedPayload: Data       // AES-GCM ciphertext (nonce ‖ ciphertext ‖ tag)
     var score: Double                // Heuristic or Survival Index score
     var timestamp: Date
-    var eventType: SpatialEventType  // .gaze | .touch | .move
-    var recalled: Int                // Incremented on each query hit
+    var eventType: String            // SpatialEventType.rawValue (.gaze | .touch | .move)
+    var recalled: Int = 0            // Incremented by explicit recallAndFetchAll() — feeds SI(t) Rⁿ
 }
 ```
 
@@ -181,11 +219,12 @@ final class RawMemoryNode {
 final class MemoryArchiveNode {
     @Attribute(.unique) var id: UUID
     var encryptedSummary: Data       // LLM-generated semantic summary, encrypted
-    var embeddingVector: Data        // Float32 array for Metal cosine search
     var createdAt: Date
-    var sourceNodeIDs: [UUID]        // Pruned RawMemoryNode references (for audit)
+    var sourceNodeIDsData: Data      // JSON-encoded [UUID] — defensive try? encoding
 }
 ```
+
+> **Note:** `sourceNodeIDs` is stored as `Data` (JSON-encoded `[UUID]`) for SwiftData/CloudKit compatibility. A computed property provides type-safe access. Encoding uses defensive `try?` with `os.log` diagnostics to prevent production crashes.
 
 ---
 
@@ -196,10 +235,10 @@ AuraKit uses a **value-type configuration** injected at startup. There are no si
 ```swift
 public struct AuraConfiguration: Sendable, Equatable {
     /// Weight applied to passive gaze events (0.0–1.0).
-    public let gazeWeight: Float
+    public let gazeWeight: Double
 
     /// Weight applied to active interactions. Bypasses LLM (always 1.0 by default).
-    public let interactionWeight: Float
+    public let interactionWeight: Double
 
     /// Maximum number of frames the Ring Buffer holds before overwrite.
     public let bufferCapacity: Int
@@ -208,8 +247,8 @@ public struct AuraConfiguration: Sendable, Equatable {
     public let storeCapacity: Int
 
     public init(
-        interactionWeight: Float = 1.0,
-        gazeWeight: Float = 0.3,
+        interactionWeight: Double = 1.0,
+        gazeWeight: Double = 0.3,
         bufferCapacity: Int = 512,
         storeCapacity: Int = 10_000
     ) throws { ... }

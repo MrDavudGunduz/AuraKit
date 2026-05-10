@@ -5,6 +5,7 @@
   <img src="https://img.shields.io/badge/visionOS-1%2B-000000?logo=apple&logoColor=white" alt="visionOS 1+"/>
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License"/>
   <img src="https://img.shields.io/badge/SPM-compatible-brightgreen" alt="SPM Compatible"/>
+  <img src="https://img.shields.io/badge/Tests-168_passing-success" alt="168 Tests Passing"/>
 </p>
 
 <h1 align="center">AuraKit</h1>
@@ -40,6 +41,9 @@ AuraKit is an **open-core Swift Package** that gives your 3D/spatial application
 | `AuraConfiguration` Dependency Injection   |         ✅         |               ✅               |
 | SwiftData `RawMemoryNode` schema           |         ✅         |               ✅               |
 | CryptoKit AES-GCM (Secure Enclave)         |         ✅         |               ✅               |
+| `EncryptedMemoryStore` with paginated API  |         ✅         |               ✅               |
+| Zero-trust tamper detection                |         ✅         |               ✅               |
+| Survival Index recall counter              |         ✅         |               ✅               |
 | CloudKit E2EE Sync                         |         ✅         |               ✅               |
 | Privacy Manifest (`PrivacyInfo.xcprivacy`) |         ✅         |               ✅               |
 | Survival Index scoring algorithm           |         ❌         |               ✅               |
@@ -110,27 +114,35 @@ AuraKit.shared.configure(with: config)
 ### 2. Capture Spatial Events
 
 ```swift
-let capture = try AuraKit.shared.capture()
+let capture = try AuraKit.capture()
 
 // Feed raycast/gaze data — fully async, Actor-isolated, main-thread safe
 await capture.record(
-    event: SpatialEvent(kind: .gaze(rawPosition: SIMD3(0.5, 1.2, -0.8)), score: 0)
+    event: SpatialEvent(
+        kind: .gaze(position: CodableSIMD3(SIMD3<Float>(0.5, 1.2, -0.8)))
+    )
 )
 
 // Touch/Move events bypass the LLM filter and score 1.0 automatically
 await capture.record(
-    event: SpatialEvent(kind: .interaction(type: .touch, rawPosition: SIMD3(0.1, 0.9, -1.0)), score: 0)
+    event: SpatialEvent(
+        kind: .interaction(type: .touch, position: CodableSIMD3(SIMD3<Float>(0.1, 0.9, -1.0)))
+    )
 )
 ```
 
-### 3. Query Memories
+### 3. Query Persisted Memories
 
 ```swift
-// Semantic search via GPU-accelerated cosine similarity (Enterprise)
-let memories = try await AuraKit.shared.memory.query(
-    context: "Suspect fled through the side door",
-    limit: 5
-)
+// Retrieve all decrypted events (pure read — no side effects)
+let events = await capture.persistedEvents()
+
+// Paginated query for large stores (avoids full-table decrypt)
+let page = await encryptedStore.events(limit: 50, offset: 0)
+
+// Explicit recall — increments Survival Index counter
+let recalled = await encryptedStore.recallAndFetchAll()
+let recalledPage = await encryptedStore.recallAndFetch(limit: 50)
 ```
 
 ### 4. Trigger Memory Compression (Enterprise IoC API)
@@ -158,14 +170,11 @@ try await AuraKit.shared.memory.compressIdleMemories()
 └──────────────┼──────────────────┼───────────────────┘
                │ L1 Enqueue       │ Heuristic Bypass
 ┌──────────────▼──────────────────▼───────────────────┐
-│              IntelligenceActor (Enterprise)         │
-│   MLX LLM Batch Processing → Survival Index Score   │
-└──────────────────────────┬──────────────────────────┘
-                           │ Prune / Archive
-┌──────────────────────────▼──────────────────────────┐
-│              MemoryActor                            │
-│   SwiftData (AES-GCM encrypted, Secure Enclave)     │
-│   RawMemoryNode ◄──────► MemoryArchiveNode          │
+│           SpatialEventStore (Protocol)               │
+│   ├─ MemoryStore (Phase 1 — in-memory)              │
+│   └─ EncryptedMemoryStore (Phase 2 — AES-GCM)      │
+│      SwiftData (Secure Enclave keys)                │
+│      RawMemoryNode ◄──────► MemoryArchiveNode       │
 └──────────────────────────┬──────────────────────────┘
                            │ CloudKit E2EE
 ┌──────────────────────────▼──────────────────────────┐
@@ -186,6 +195,8 @@ AuraKit is designed with a **Zero-Trust, Privacy-First** philosophy:
 - Cross-device sync uses **CloudKit End-to-End Encryption** — Apple cannot read your data
 - The on-device LLM runs in a **network-isolated MLX sandbox** — no data leaves the device
 - A `PrivacyInfo.xcprivacy` manifest declares all data types and confirms no external transmission
+- **Zero `force_try`** — all encoding/decoding uses defensive error handling
+- **Keychain hardening** — all write operations return status codes and log failures
 
 See [SECURITY.md](./SECURITY.md) for full details.
 

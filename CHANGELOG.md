@@ -20,18 +20,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AuraKit.isConfigured`: lightweight state inspection property — avoids the overhead of catching `AuraError.notConfigured` from `capture()`
 - `SpatialEvent.score` default value: `score` parameter now defaults to `0` — callers no longer pass a meaningless score that is always overwritten by `HeuristicRouter`
 
+#### Phase 2 — Encrypted Storage & Security Hardening
+
+- `EncryptedMemoryStore`: Actor-isolated SwiftData persistence with AES-GCM encryption via Secure Enclave keys
+- `RawMemoryNode`: SwiftData `@Model` entity storing encrypted payloads, scores, timestamps, event types, and recall counters
+- `MemoryArchiveNode`: SwiftData `@Model` entity for consolidated semantic memory summaries with source node references
+- `KeyManager`: Actor-isolated Secure Enclave key lifecycle manager with HKDF-SHA256 key derivation and Keychain-backed persistence
+- `EncryptionService`: Stateless AES-GCM encrypt/decrypt service wrapping CryptoKit
+- `PersistenceController`: SwiftData `ModelContainer` factory supporting both persistent and in-memory configurations
+- `SpatialEventStore`: Protocol abstraction enabling zero-call-site-modification storage backend swaps
+- `EncryptedMemoryStore.events(limit:offset:)`: Paginated query API for large stores — prevents full-table decryption OOM
+- `EncryptedMemoryStore.recallAndFetchAll()`: Explicit recall API — fetches all events and increments recall counter for Survival Index
+- `EncryptedMemoryStore.recallAndFetch(limit:offset:)`: Paginated recall API with explicit counter increment
+- `EncryptedMemoryStore.recalledCount(for:)`: Sendable-safe metadata projection for Survival Index `Rⁿ` parameter
+- `RawMemoryNode.recalled`: Integer counter incremented on each read — feeds Phase 3 Survival Index formula
+- `PrivacyInfo.xcprivacy`: Privacy Manifest declaring no tracking, no external data transmission
+- `Phase2HardeningTests.swift`: Pagination and recall tracking test suite
+- `ZeroTrustTests.swift`: Wrong-key tamper detection and ciphertext integrity verification tests
+
 ### Changed
 
 - `CaptureActor.init`: auto-constructs `MemoryStore` from `config.storeCapacity` when no explicit store is injected — eliminates capacity inconsistency when using direct `CaptureActor` construction
 - `AuraKit.configure(with:)`: simplified to delegate `MemoryStore` construction to `CaptureActor` (single source of truth for store capacity)
 - `AuraKit.reset()`: now emits `Logger.info` when tearing down an active pipeline for diagnostics
+- `EncryptedMemoryStore.allEvents()`: refactored to **pure read** — no longer increments recall counter. Use `recallAndFetchAll()` for explicit Survival Index recall semantics
+- `EncryptedMemoryStore.events(limit:offset:)`: refactored to **pure read** — use `recallAndFetch(limit:offset:)` for recall semantics
+- `SpatialEvent.score`: type unified from `Float` to `Double` across the entire pipeline (`AuraConfiguration`, `HeuristicRouter`, `RouteDecision`, `SpatialEvent`) — eliminates implicit widening conversions and precision mismatches with `RawMemoryNode.score`
+- `MemoryArchiveNode`: Logger extracted from `@Model` class to external `MemoryArchiveNodeLog` enum — defensive best practice for SwiftData macro compatibility
 - `RingBuffer.drainAll()`: merged slot-clearing into the read pass — O(count) instead of O(capacity) for sparse buffers
+
+### Fixed
+
+- **`PersistenceController` force unwrap**: Replaced `cloudKitContainerIdentifier!` with safe `if let` optional binding — eliminates the last force unwrap in the framework
+- **`EncryptedMemoryStore` read side effect**: `allEvents()` and `events(limit:offset:)` no longer increment `node.recalled` — read operations are now side-effect-free per the Principle of Least Surprise
+- **`EncryptedMemoryStore` DRY violation**: Extracted shared decrypt logic into `decryptNodes()` and `decryptAndRecall()` private helpers
+- **`EncryptedMemoryStore` autosave conflict**: Changed `autosaveEnabled` from `true` to `false` — prevents duplicate writes and timing conflicts between SwiftData's autosave and explicit `save()` calls
+- **`MemoryArchiveNode` production crash risk**: Replaced `force_try` (`try!`) in `sourceNodeIDs` JSON encoding with defensive `try?` and `os.log` diagnostics — eliminates crash under memory pressure
+- **`KeychainHelper` silent write failure**: `store()` now returns `@discardableResult Bool` and logs `OSStatus` errors — all Keychain operations are observable via structured logging
+- **`KeychainHelper` logger access violation**: Added dedicated `Logger` instance to `KeychainHelper` enum — previously referenced `KeyManager`'s private logger across access boundaries
 
 ### Improved
 
 - `.gitignore`: added `Package.resolved` (SPM library best practice), recursive `.DS_Store` matching, additional IDE state exclusions
 - CI pipeline: added release build step, coverage artifact upload (txt + lcov), DocC generation step, `Package.swift`-based cache key
-- Test suite: added `isConfigured` lifecycle tests (3), store capacity consistency test, default score rescore test (5 new tests → 83 total)
+- Test suite: **134 tests across 18 suites** — Thread Sanitizer verified, zero data races
+- Documentation: all files updated to reflect Phase 2 completion and current API surface
 
 ---
 
@@ -49,11 +82,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Phase 2 — Encrypted Storage (Weeks 3–4)
 
-- `RawMemoryNode`: `@Model`-annotated SwiftData entity with AES-GCM encrypted payload field
-- `MemoryArchiveNode`: Consolidated semantic summary node with encrypted embedding vector
+- `RawMemoryNode`: `@Model`-annotated SwiftData entity with AES-GCM encrypted payload, recall counter, and event type metadata
+- `MemoryArchiveNode`: Consolidated semantic summary node with encrypted data and source node audit trail
+- `EncryptedMemoryStore`: Full-featured encrypted persistence actor with paginated queries and recall tracking
 - Zero-Trust encryption: AES-GCM keys generated in the Secure Enclave via `CryptoKit.SecureEnclave.P256`
 - CloudKit End-to-End Encryption sync across iPhone, iPad, and Apple Vision Pro
 - `PrivacyInfo.xcprivacy` manifest declaring no external data transmission
+- Production hardening: zero `force_try`, Keychain diagnostic logging, deterministic save control
 
 #### Phase 3 — On-Device LLM (Weeks 5–6) — _Enterprise_
 
