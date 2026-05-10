@@ -14,8 +14,8 @@ struct CaptureActorTests {
   // MARK: Helpers
 
   private func makeCaptureActor(
-    interactionWeight: Float = 1.0,
-    gazeWeight: Float = 0.3,
+    interactionWeight: Double = 1.0,
+    gazeWeight: Double = 0.3,
     bufferCapacity: Int = 64
   ) throws -> CaptureActor {
     let config = try AuraConfiguration(

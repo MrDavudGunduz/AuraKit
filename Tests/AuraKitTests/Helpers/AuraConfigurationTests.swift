@@ -165,7 +165,7 @@ struct AuraConfigurationTests {
     #expect(a != b)
   }
 
-  // MARK: - Float Special Values
+  // MARK: - Double Special Values
 
   @Test("NaN interactionWeight throws invalidConfiguration")
   func testNaNInteractionWeight() {
