@@ -95,6 +95,19 @@ import os.log
 /// ### Storage
 /// - ``SpatialEventStore``
 /// - ``MemoryStore``
+/// - ``EncryptedMemoryStore``
+///
+/// ### Persistence
+/// - ``RawMemoryNode``
+/// - ``MemoryArchiveNode``
+/// - ``PersistenceController``
+/// - ``SpatialEventType``
+/// - ``AuraKitSchemaV1``
+/// - ``AuraKitMigrationPlan``
+///
+/// ### Security
+/// - ``KeyManager``
+/// - ``EncryptionService``
 ///
 /// ### Errors
 /// - ``AuraError``
@@ -206,8 +219,8 @@ public final class AuraKit {
   ///   - storeCapacity: Max events in persistent memory. Default `10_000`.
   /// - Throws: ``AuraError/invalidConfiguration(reason:)`` if any parameter is out of range.
   public func configure(
-    interactionWeight: Float = AuraConfiguration.defaultInteractionWeight,
-    gazeWeight: Float = AuraConfiguration.defaultGazeWeight,
+    interactionWeight: Double = AuraConfiguration.defaultInteractionWeight,
+    gazeWeight: Double = AuraConfiguration.defaultGazeWeight,
     bufferCapacity: Int = AuraConfiguration.defaultBufferCapacity,
     storeCapacity: Int = AuraConfiguration.defaultStoreCapacity
   ) throws {
@@ -266,8 +279,8 @@ public final class AuraKit {
   ///
   /// - Throws: ``AuraError/invalidConfiguration(reason:)`` if any parameter is out of range.
   public static func configure(
-    interactionWeight: Float = AuraConfiguration.defaultInteractionWeight,
-    gazeWeight: Float = AuraConfiguration.defaultGazeWeight,
+    interactionWeight: Double = AuraConfiguration.defaultInteractionWeight,
+    gazeWeight: Double = AuraConfiguration.defaultGazeWeight,
     bufferCapacity: Int = AuraConfiguration.defaultBufferCapacity,
     storeCapacity: Int = AuraConfiguration.defaultStoreCapacity
   ) throws {
