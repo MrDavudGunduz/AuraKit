@@ -32,7 +32,7 @@ import SwiftData
 /// ```
 public enum AuraKitSchemaV1: VersionedSchema {
 
-  public static let versionIdentifier: Schema.Version = Schema.Version(1, 0, 0)
+  public static let versionIdentifier = Schema.Version(1, 0, 0)
 
   public static var models: [any PersistentModel.Type] {
     [RawMemoryNode.self, MemoryArchiveNode.self]

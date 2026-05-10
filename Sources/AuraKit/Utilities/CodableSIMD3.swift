@@ -17,11 +17,9 @@ import simd
 /// at every call site.
 public struct CodableSIMD3: Sendable, Hashable, Codable {
 
-  // swiftlint:disable identifier_name
   public let x: Float
   public let y: Float
   public let z: Float
-  // swiftlint:enable identifier_name
 
   /// The underlying `SIMD3<Float>` value.
   public var simd3: SIMD3<Float> { SIMD3(x, y, z) }
@@ -34,16 +32,11 @@ public struct CodableSIMD3: Sendable, Hashable, Codable {
   }
 
   /// Creates a `CodableSIMD3` from individual float components.
-  ///
-  /// Convenience initialiser that eliminates the need to construct a
-  /// `SIMD3<Float>` intermediate at call sites.
-  // swiftlint:disable identifier_name
   public init(x: Float, y: Float, z: Float) {
     self.x = x
     self.y = y
     self.z = z
   }
-  // swiftlint:enable identifier_name
 }
 
 // MARK: - Common Constants

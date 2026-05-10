@@ -5,112 +5,112 @@
 import Foundation
 import os.log
 
-/// # AuraKit
-///
-/// AuraKit is an **open-core Swift Package** that provides iOS, macOS, and visionOS
-/// applications with a persistent, privacy-first spatial memory layer.
-///
-/// ## Overview
-///
-/// AuraKit ingests 3D spatial events (gaze, touch, movement) through a Swift 6
-/// Actor-isolated pipeline, scores them using a heuristic bypass engine, and stores
-/// them in an on-device AES-GCM encrypted SwiftData store — with no data ever
-/// leaving the user's device.
-///
-/// The Enterprise tier (`Aura Intelligence`) extends this foundation with:
-/// - On-device LLM semantic pruning via Apple MLX
-/// - Survival Index scoring for intelligent memory longevity
-/// - Semantic consolidation (cognitive compression)
-/// - GPU-accelerated cosine similarity search via Metal
-///
-/// ## Quick Start
-///
-/// Configure AuraKit once at app launch from a `@MainActor` context. The simplest
-/// approach is `App.body` or a `Task { @MainActor in }` block:
-///
-/// ```swift
-/// import AuraKit
-///
-/// @main
-/// struct MyApp: App {
-///     var body: some Scene {
-///         WindowGroup { ContentView() }
-///             .task {
-///                 // .task modifier runs on @MainActor — safe for configure()
-///                 let config = try AuraConfiguration(
-///                     interactionWeight: 1.0, // Touch/Move: max score, bypasses LLM
-///                     gazeWeight: 0.3,        // Gaze: low-weight, queued in L1 Buffer
-///                     bufferCapacity: 512
-///                 )
-///                 AuraKit.shared.configure(with: config)
-///             }
-///     }
-/// }
-/// ```
-///
-/// Record a spatial event using the convenience factory:
-///
-/// ```swift
-/// try await AuraKit.shared.capture().record(
-///     event: SpatialEvent(
-///         kind: .gaze(rawPosition: SIMD3(0.1, 0.9, -1.0)),
-///         score: 0  // Overwritten by HeuristicRouter at record time
-///     )
-/// )
-/// ```
-///
-/// ## Concurrency
-///
-/// `AuraKit.shared` and `configure(with:)` are `@MainActor`-isolated.
-/// Call them from the main actor context — `App.body`, a `.task` modifier,
-/// or an explicit `Task { @MainActor in ... }` block.
-/// Calling them from a background task without the correct actor context
-/// will produce a compile-time error in Swift 6 strict concurrency mode.
-///
-/// ## Architecture
-///
-/// ```
-/// CaptureActor → IntelligenceActor (Enterprise) → MemoryActor → Metal Search
-/// ```
-///
-/// For complete architecture documentation, see
-/// [ARCHITECTURE.md](https://github.com/MrDavudGunduz/AuraKit/blob/main/ARCHITECTURE.md).
-///
-/// ## Topics
-///
-/// ### Configuration
-/// - ``AuraConfiguration``
-///
-/// ### Capture
-/// - ``CaptureActor``
-/// - ``SpatialEvent``
-/// - ``SpatialEventKind``
-/// - ``InteractionType``
-/// - ``RingBuffer``
-///
-/// ### Routing
-/// - ``HeuristicRouter``
-/// - ``RouteDecision``
-///
-/// ### Storage
-/// - ``SpatialEventStore``
-/// - ``MemoryStore``
-/// - ``EncryptedMemoryStore``
-///
-/// ### Persistence
-/// - ``RawMemoryNode``
-/// - ``MemoryArchiveNode``
-/// - ``PersistenceController``
-/// - ``SpatialEventType``
-/// - ``AuraKitSchemaV1``
-/// - ``AuraKitMigrationPlan``
-///
-/// ### Security
-/// - ``KeyManager``
-/// - ``EncryptionService``
-///
-/// ### Errors
-/// - ``AuraError``
+// # AuraKit
+//
+// AuraKit is an **open-core Swift Package** that provides iOS, macOS, and visionOS
+// applications with a persistent, privacy-first spatial memory layer.
+//
+// ## Overview
+//
+// AuraKit ingests 3D spatial events (gaze, touch, movement) through a Swift 6
+// Actor-isolated pipeline, scores them using a heuristic bypass engine, and stores
+// them in an on-device AES-GCM encrypted SwiftData store — with no data ever
+// leaving the user's device.
+//
+// The Enterprise tier (`Aura Intelligence`) extends this foundation with:
+// - On-device LLM semantic pruning via Apple MLX
+// - Survival Index scoring for intelligent memory longevity
+// - Semantic consolidation (cognitive compression)
+// - GPU-accelerated cosine similarity search via Metal
+//
+// ## Quick Start
+//
+// Configure AuraKit once at app launch from a `@MainActor` context. The simplest
+// approach is `App.body` or a `Task { @MainActor in }` block:
+//
+// ```swift
+// import AuraKit
+//
+// @main
+// struct MyApp: App {
+//     var body: some Scene {
+//         WindowGroup { ContentView() }
+//             .task {
+//                 // .task modifier runs on @MainActor — safe for configure()
+//                 let config = try AuraConfiguration(
+//                     interactionWeight: 1.0, // Touch/Move: max score, bypasses LLM
+//                     gazeWeight: 0.3,        // Gaze: low-weight, queued in L1 Buffer
+//                     bufferCapacity: 512
+//                 )
+//                 AuraKit.shared.configure(with: config)
+//             }
+//     }
+// }
+// ```
+//
+// Record a spatial event using the convenience factory:
+//
+// ```swift
+// try await AuraKit.shared.capture().record(
+//     event: SpatialEvent(
+//         kind: .gaze(rawPosition: SIMD3(0.1, 0.9, -1.0)),
+//         score: 0  // Overwritten by HeuristicRouter at record time
+//     )
+// )
+// ```
+//
+// ## Concurrency
+//
+// `AuraKit.shared` and `configure(with:)` are `@MainActor`-isolated.
+// Call them from the main actor context — `App.body`, a `.task` modifier,
+// or an explicit `Task { @MainActor in ... }` block.
+// Calling them from a background task without the correct actor context
+// will produce a compile-time error in Swift 6 strict concurrency mode.
+//
+// ## Architecture
+//
+// ```
+// CaptureActor → IntelligenceActor (Enterprise) → MemoryActor → Metal Search
+// ```
+//
+// For complete architecture documentation, see
+// [ARCHITECTURE.md](https://github.com/MrDavudGunduz/AuraKit/blob/main/ARCHITECTURE.md).
+//
+// ## Topics
+//
+// ### Configuration
+// - ``AuraConfiguration``
+//
+// ### Capture
+// - ``CaptureActor``
+// - ``SpatialEvent``
+// - ``SpatialEventKind``
+// - ``InteractionType``
+// - ``RingBuffer``
+//
+// ### Routing
+// - ``HeuristicRouter``
+// - ``RouteDecision``
+//
+// ### Storage
+// - ``SpatialEventStore``
+// - ``MemoryStore``
+// - ``EncryptedMemoryStore``
+//
+// ### Persistence
+// - ``RawMemoryNode``
+// - ``MemoryArchiveNode``
+// - ``PersistenceController``
+// - ``SpatialEventType``
+// - ``AuraKitSchemaV1``
+// - ``AuraKitMigrationPlan``
+//
+// ### Security
+// - ``KeyManager``
+// - ``EncryptionService``
+//
+// ### Errors
+// - ``AuraError``
 
 // MARK: - AuraKit
 

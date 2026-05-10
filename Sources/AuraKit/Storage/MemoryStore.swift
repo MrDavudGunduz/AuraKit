@@ -199,4 +199,3 @@ public actor MemoryStore: SpatialEventStore {
     _count = 0
   }
 }
-
