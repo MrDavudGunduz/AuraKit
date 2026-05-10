@@ -6,9 +6,16 @@ on:
   pull_request:
     branches: [main]
 
+# ── Environment ──────────────────────────────────────────────────────────────
+env:
+  # Minimum acceptable line coverage percentage.
+  # The pipeline will FAIL if coverage drops below this threshold.
+  COVERAGE_THRESHOLD: 80
+
 jobs:
-  test:
-    name: Swift ${{ matrix.swift }} · ${{ matrix.os }}
+  # ── macOS Native Tests ───────────────────────────────────────────────────
+  test-macos:
+    name: macOS · Swift ${{ matrix.swift }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -35,7 +42,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-spm-
 
-      # ── Build ────────────────────────────────────────────────────────────
+      # ── Build ──────────────────────────────────────────────────────────
 
       - name: Build (debug)
         run: swift build -c debug
@@ -43,7 +50,7 @@ jobs:
       - name: Build (release)
         run: swift build -c release
 
-      # ── Test ─────────────────────────────────────────────────────────────
+      # ── Test ───────────────────────────────────────────────────────────
 
       - name: Test (parallel)
         run: swift test --parallel
@@ -51,7 +58,7 @@ jobs:
       - name: Test with Thread Sanitizer
         run: swift test --sanitize=thread
 
-      # ── Code Coverage ───────────────────────────────────────────────────
+      # ── Code Coverage ─────────────────────────────────────────────────
 
       - name: Generate Code Coverage
         run: |
@@ -65,6 +72,33 @@ jobs:
               -ignore-filename-regex='\.build|Tests' -format=lcov > coverage.lcov
           fi
 
+      - name: Enforce Coverage Threshold
+        run: |
+          if [ ! -f coverage-report.txt ]; then
+            echo "⚠️ Coverage report not found — skipping threshold check."
+            exit 0
+          fi
+
+          # Extract the total line coverage percentage from the TOTAL row
+          COVERAGE=$(tail -1 coverage-report.txt | awk '{print $NF}' | tr -d '%')
+
+          if [ -z "$COVERAGE" ]; then
+            echo "⚠️ Could not parse coverage percentage — skipping threshold check."
+            exit 0
+          fi
+
+          echo "📊 Line Coverage: ${COVERAGE}%"
+          echo "📏 Threshold:     ${COVERAGE_THRESHOLD}%"
+
+          # Compare as integers (bash doesn't do float comparison natively)
+          COVERAGE_INT=${COVERAGE%.*}
+          if [ "$COVERAGE_INT" -lt "$COVERAGE_THRESHOLD" ]; then
+            echo "❌ Coverage ${COVERAGE}% is below the ${COVERAGE_THRESHOLD}% threshold."
+            exit 1
+          else
+            echo "✅ Coverage ${COVERAGE}% meets the ${COVERAGE_THRESHOLD}% threshold."
+          fi
+
       - name: Upload Coverage Artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -75,7 +109,7 @@ jobs:
             coverage.lcov
           retention-days: 30
 
-      # ── Documentation ───────────────────────────────────────────────────
+      # ── Documentation ─────────────────────────────────────────────────
 
       - name: Generate DocC Documentation
         run: |
@@ -83,3 +117,81 @@ jobs:
             --target AuraKit \
             --disable-indexing \
             --output-path .build/docs 2>&1 || true
+
+  # ── iOS Simulator Tests ──────────────────────────────────────────────────
+  test-ios:
+    name: iOS Simulator · ${{ matrix.destination }}
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - destination: "platform=iOS Simulator,name=iPhone 16,OS=latest"
+            scheme: AuraKit
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Build for iOS Simulator
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing \
+            -scheme "${{ matrix.scheme }}" \
+            -destination "${{ matrix.destination }}" \
+            -skipPackagePluginValidation \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            | xcpretty
+
+      - name: Test on iOS Simulator
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -scheme "${{ matrix.scheme }}" \
+            -destination "${{ matrix.destination }}" \
+            -skipPackagePluginValidation \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            | xcpretty
+
+  # ── visionOS Simulator Tests ───────────────────────────────────────────
+  test-visionos:
+    name: visionOS Simulator · Apple Vision Pro
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Build for visionOS Simulator
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing \
+            -scheme AuraKit \
+            -destination "platform=visionOS Simulator,name=Apple Vision Pro" \
+            -skipPackagePluginValidation \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            | xcpretty
+
+      - name: Test on visionOS Simulator
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -scheme AuraKit \
+            -destination "platform=visionOS Simulator,name=Apple Vision Pro" \
+            -skipPackagePluginValidation \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            | xcpretty
