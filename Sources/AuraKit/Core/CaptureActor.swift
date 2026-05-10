@@ -117,6 +117,48 @@ public actor CaptureActor {
     }
   }
 
+  /// Records multiple events through the capture pipeline in a single batch.
+  ///
+  /// Events are routed synchronously by the ``HeuristicRouter``, then:
+  /// - **Interaction events** → collected and written via ``SpatialEventStore/batchAppend(_:)``
+  ///   (single `save()` for all store-bound events)
+  /// - **Gaze events** → individually enqueued in the L1 ``RingBuffer``
+  ///
+  /// Use this for burst ingestion scenarios where multiple sensor frames are
+  /// available simultaneously (e.g., ARKit batch updates, replay pipelines).
+  ///
+  /// - Parameter events: The raw events from the sensor pipeline. The `score`
+  ///   field on each event will be **overwritten** by the router's decision.
+  public func recordBatch(events: [SpatialEvent]) async {
+    guard !events.isEmpty else { return }
+
+    var storeEvents: [SpatialEvent] = []
+    storeEvents.reserveCapacity(events.count)
+
+    for event in events {
+      let decision = router.route(event, config: config)
+
+      switch decision {
+      case .directStore(let score):
+        let scored = SpatialEvent(
+          id: event.id, timestamp: event.timestamp, kind: event.kind, score: score
+        )
+        storeEvents.append(scored)
+
+      case .enqueueBuffer(let score):
+        let scored = SpatialEvent(
+          id: event.id, timestamp: event.timestamp, kind: event.kind, score: score
+        )
+        await buffer.enqueue(scored)
+      }
+    }
+
+    // Batch-insert all store-bound events in a single save
+    if !storeEvents.isEmpty {
+      await store.batchAppend(storeEvents)
+    }
+  }
+
   /// Drains all L1 ring buffer events and returns them for downstream processing.
   ///
   /// After this call, the ring buffer is empty. In the Enterprise tier, the
