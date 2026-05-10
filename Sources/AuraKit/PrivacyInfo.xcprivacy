@@ -3,24 +3,31 @@
     "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <!-- AuraKit does NOT track users across apps or websites -->
     <key>NSPrivacyTracking</key>
     <false/>
 
+    <!-- No tracking domains — zero external network calls -->
     <key>NSPrivacyTrackingDomains</key>
     <array/>
 
+    <!-- Data types collected: spatial interaction events only -->
     <key>NSPrivacyCollectedDataTypes</key>
     <array>
         <dict>
+            <!-- Spatial interaction events (gaze positions, touch positions) -->
             <key>NSPrivacyCollectedDataType</key>
             <string>NSPrivacyCollectedDataTypeOtherUserContent</string>
 
+            <!-- Not linked to user identity -->
             <key>NSPrivacyCollectedDataTypeLinked</key>
             <false/>
 
+            <!-- Not used for tracking -->
             <key>NSPrivacyCollectedDataTypeTracking</key>
             <false/>
 
+            <!-- Used solely for app functionality (spatial memory) -->
             <key>NSPrivacyCollectedDataTypePurposes</key>
             <array>
                 <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
@@ -28,7 +35,38 @@
         </dict>
     </array>
 
+    <!-- Accessed API types required by AuraKit -->
     <key>NSPrivacyAccessedAPITypes</key>
-    <array/>
+    <array>
+        <!-- UserDefaults: framework configuration storage -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>CA92.1</string>
+            </array>
+        </dict>
+
+        <!-- File timestamp APIs: SwiftData/SQLite store management -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>C617.1</string>
+            </array>
+        </dict>
+
+        <!-- Disk space APIs: SwiftData storage capacity checks -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>E174.1</string>
+            </array>
+        </dict>
+    </array>
 </dict>
 </plist>
