@@ -97,7 +97,7 @@ public enum SpatialEventKind: Sendable, Hashable, Codable {
 /// | Kind         | Score            |
 /// |--------------|------------------|
 /// | `.gaze`      | `gazeWeight` (configurable, default `0.3`) |
-/// | `.interaction` | `1.0` (fixed maximum) |
+/// | `.interaction` | `interactionWeight` (configurable, default `1.0`) |
 ///
 /// ## Thread Safety
 ///
@@ -126,7 +126,9 @@ public struct SpatialEvent: Identifiable, Sendable, Hashable, Codable {
   /// Heuristic importance score in the range `[0.0, 1.0]`.
   ///
   /// Assigned by ``HeuristicRouter``; higher values indicate stronger user intent.
-  public let score: Float
+  /// Uses `Double` to maintain precision consistency with ``RawMemoryNode/score``
+  /// — no widening/narrowing conversions in the encrypt → persist → query path.
+  public let score: Double
 
   // MARK: Init
 
@@ -143,7 +145,7 @@ public struct SpatialEvent: Identifiable, Sendable, Hashable, Codable {
     id: UUID = UUID(),
     timestamp: Date = Date(),
     kind: SpatialEventKind,
-    score: Float = 0
+    score: Double = 0
   ) {
     self.id = id
     self.timestamp = timestamp

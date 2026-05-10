@@ -40,10 +40,10 @@ public struct AuraConfiguration: Sendable, Equatable {
   // MARK: - Constants
 
   /// Default weight applied to `.interaction` events (touch, move, pinch, drag).
-  public static let defaultInteractionWeight: Float = 1.0
+  public static let defaultInteractionWeight: Double = 1.0
 
   /// Default weight applied to `.gaze` events.
-  public static let defaultGazeWeight: Float = 0.3
+  public static let defaultGazeWeight: Double = 0.3
 
   /// Default L1 ring buffer capacity in number of events.
   public static let defaultBufferCapacity: Int = 512
@@ -59,12 +59,12 @@ public struct AuraConfiguration: Sendable, Equatable {
   /// Heuristic importance weight for high-signal interaction events.
   ///
   /// Must be in the range `[0.0, 1.0]`. Validated at configuration time.
-  public let interactionWeight: Float
+  public let interactionWeight: Double
 
   /// Heuristic importance weight for low-signal passive gaze events.
   ///
   /// Must be in the range `[0.0, 1.0]`. Validated at configuration time.
-  public let gazeWeight: Float
+  public let gazeWeight: Double
 
   /// The fixed capacity of the L1 `RingBuffer`.
   ///
@@ -93,8 +93,8 @@ public struct AuraConfiguration: Sendable, Equatable {
   /// - Throws: ``AuraError/invalidConfiguration(reason:)`` if any parameter
   ///   is out of its valid range.
   public init(
-    interactionWeight: Float = defaultInteractionWeight,
-    gazeWeight: Float = defaultGazeWeight,
+    interactionWeight: Double = defaultInteractionWeight,
+    gazeWeight: Double = defaultGazeWeight,
     bufferCapacity: Int = defaultBufferCapacity,
     storeCapacity: Int = defaultStoreCapacity
   ) throws {
@@ -128,8 +128,8 @@ public struct AuraConfiguration: Sendable, Equatable {
   /// Bypasses validation to avoid `try!` or force-unwrap at call sites
   /// where correctness is guaranteed by the compiler (e.g., `AuraConfiguration.default`).
   private init(
-    uncheckedInteractionWeight interactionWeight: Float,
-    gazeWeight: Float,
+    uncheckedInteractionWeight interactionWeight: Double,
+    gazeWeight: Double,
     bufferCapacity: Int,
     storeCapacity: Int
   ) {

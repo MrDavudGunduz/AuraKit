@@ -22,7 +22,7 @@ public enum RouteDecision: Sendable, Equatable {
   ///
   /// - Parameter score: Always `interactionWeight` from the active config
   ///   (defaults to `1.0`).
-  case directStore(score: Float)
+  case directStore(score: Double)
 
   /// The event should be enqueued in the L1 ``RingBuffer``.
   ///
@@ -30,7 +30,7 @@ public enum RouteDecision: Sendable, Equatable {
   /// forwarded to the LLM intelligence layer (Enterprise tier) when flushed.
   ///
   /// - Parameter score: The `gazeWeight` from the active config (default `0.3`).
-  case enqueueBuffer(score: Float)
+  case enqueueBuffer(score: Double)
 }
 
 // MARK: - HeuristicRouter
