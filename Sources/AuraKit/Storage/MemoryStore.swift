@@ -144,6 +144,41 @@ public actor MemoryStore: SpatialEventStore {
     }
   }
 
+  /// Returns a paginated slice of stored events in chronological order.
+  ///
+  /// This is the in-memory counterpart of ``EncryptedMemoryStore/events(limit:offset:)``.
+  /// In bounded mode, uses direct circular-buffer traversal with offset/limit
+  /// windowing — avoids allocating a full snapshot just to slice it.
+  ///
+  /// - Parameters:
+  ///   - limit: Maximum number of events to return.
+  ///   - offset: Number of events to skip from the beginning.
+  /// - Returns: Events in chronological order (oldest first).
+  public func events(limit: Int, offset: Int = 0) -> [SpatialEvent] {
+    guard _count > 0, limit > 0, offset >= 0, offset < _count else { return [] }
+
+    if isBounded {
+      let effectiveLimit = min(limit, _count - offset)
+      var result = [SpatialEvent]()
+      result.reserveCapacity(effectiveLimit)
+
+      // Head of the circular buffer — oldest element
+      let head = _count == capacity ? writeIndex : 0
+      let startIndex = (head + offset) % capacity
+
+      for idx in 0..<effectiveLimit {
+        let index = (startIndex + idx) % capacity
+        if let event = storage[index] {
+          result.append(event)
+        }
+      }
+      return result
+    } else {
+      let end = min(offset + limit, _count)
+      return storage[offset..<end].compactMap { $0 }
+    }
+  }
+
   /// The total number of events currently in the store.
   public var count: Int {
     _count
