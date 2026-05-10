@@ -14,51 +14,19 @@ import SwiftData
 
 /// An actor-isolated, AES-GCM encrypted persistent store backed by SwiftData.
 ///
-/// `EncryptedMemoryStore` is the Phase 2 implementation of ``SpatialEventStore``.
-/// It provides the same `append / allEvents / count` API as ``MemoryStore``,
-/// but persists every ``SpatialEvent`` as encrypted ciphertext in the on-device
-/// SwiftData store.
+/// Phase 2 implementation of ``SpatialEventStore``. Provides the same
+/// `append / allEvents / count` API as ``MemoryStore``, but persists every
+/// ``SpatialEvent`` as AES-GCM ciphertext in the on-device SwiftData store.
 ///
-/// ## Write Path
+/// **Write:** `SpatialEvent → JSONEncoder → EncryptionService.encrypt → RawMemoryNode → ModelContext`
 ///
-/// ```
-/// SpatialEvent
-///   → JSONEncoder.encode()
-///   → EncryptionService.encrypt(_, using: symmetricKey)
-///   → RawMemoryNode(encryptedPayload: ciphertext, ...)
-///   → ModelContext.insert()
-/// ```
+/// **Read:** `ModelContext.fetch → EncryptionService.decrypt → JSONDecoder → SpatialEvent`
 ///
-/// ## Read Path
+/// `allEvents()` and `events(limit:offset:)` are **pure reads**. To increment
+/// the Survival Index recall counter, use ``recallAndFetchAll()`` or
+/// ``recallAndFetch(limit:offset:)`` explicitly.
 ///
-/// ```
-/// ModelContext.fetch(FetchDescriptor<RawMemoryNode>)
-///   → EncryptionService.decrypt(encryptedPayload, using: symmetricKey)
-///   → JSONDecoder.decode(SpatialEvent.self, from: plaintext)
-/// ```
-///
-/// ## Read vs Recall Semantics
-///
-/// `allEvents()` and `events(limit:offset:)` are **pure reads** — they do not
-/// modify any stored state. To increment the Survival Index recall counter, use
-/// ``recallAndFetchAll()`` or ``recallAndFetch(limit:offset:)`` explicitly.
-/// This separation follows the **Principle of Least Surprise**: read methods
-/// must not have write side effects.
-///
-/// ## Dependency Injection
-///
-/// `CaptureActor` depends on the ``SpatialEventStore`` protocol — not on this
-/// concrete type. Swap `MemoryStore` for `EncryptedMemoryStore` at init:
-///
-/// ```swift
-/// let store = try await EncryptedMemoryStore(container: container, keyManager: keyManager)
-/// let actor = CaptureActor(config: config, store: store)
-/// ```
-///
-/// ## Thread Safety
-///
-/// All operations are actor-isolated. The `ModelContext` is created on the
-/// actor's executor and never escapes to other concurrency domains.
+/// All operations are actor-isolated. The `ModelContext` never escapes.
 public actor EncryptedMemoryStore: SpatialEventStore {
 
   // MARK: - Internal Logger
@@ -170,25 +138,10 @@ public actor EncryptedMemoryStore: SpatialEventStore {
 
   /// Encrypts and persists multiple events in a single batch operation.
   ///
-  /// Unlike sequential ``append(_:)`` calls — which issue a `save()` per event
-  /// — `batchAppend` inserts all nodes into the `ModelContext` and issues a
-  /// **single** `save()` at the end. For `N` events this reduces disk I/O
-  /// from `N` writes to `1`.
-  ///
-  /// ## Performance
-  ///
-  /// | Events | `append()` I/O | `batchAppend()` I/O | Reduction |
-  /// |--------|----------------|---------------------|-----------|
-  /// | 10     | 10 saves       | 1 save              | 90%       |
-  /// | 100    | 100 saves      | 1 save              | 99%       |
-  /// | 1000   | 1000 saves     | 1 save              | 99.9%     |
-  ///
-  /// ## Error Handling
-  ///
-  /// Events that fail encryption are individually skipped with an error-level
-  /// log — successfully encrypted events in the same batch are still persisted.
-  /// If the final `save()` fails, all inserted nodes in the batch are lost
-  /// (SwiftData rolls back uncommitted changes).
+  /// Inserts all nodes into the `ModelContext` and issues a **single** `save()`,
+  /// reducing disk I/O from `N` writes to `1`. Events that fail encryption are
+  /// individually skipped; if the final `save()` fails, all inserted nodes are
+  /// rolled back by SwiftData.
   ///
   /// - Parameter events: The spatial events to persist.
   public func batchAppend(_ events: [SpatialEvent]) async {
@@ -242,17 +195,9 @@ public actor EncryptedMemoryStore: SpatialEventStore {
     }
   }
 
-  /// Fetches all stored events, decrypting each payload before returning.
-  ///
-  /// This is a **pure read** operation — no stored state is modified.
-  /// To also increment the Survival Index recall counter, use
-  /// ``recallAndFetchAll()`` instead.
-  ///
-  /// Events are returned in chronological order (oldest first).
-  /// Any node that fails decryption is silently skipped and an error-level
-  /// log is emitted — partial results are returned rather than throwing.
-  ///
-  /// - Returns: All successfully decrypted ``SpatialEvent`` values.
+  /// Fetches all stored events, decrypting each payload. **Pure read** — no
+  /// state is modified. Use ``recallAndFetchAll()`` to also increment recall
+  /// counters. Events returned chronologically; failed decryptions are skipped.
   public func allEvents() async -> [SpatialEvent] {
     do {
       let key = try await keyManager.symmetricKey()
@@ -271,20 +216,9 @@ public actor EncryptedMemoryStore: SpatialEventStore {
     }
   }
 
-  /// Fetches a paginated slice of stored events, decrypting each payload.
-  ///
-  /// This is a **pure read** operation — no stored state is modified.
-  /// To also increment the Survival Index recall counter, use
-  /// ``recallAndFetch(limit:offset:)`` instead.
-  ///
-  /// Use this instead of ``allEvents()`` when the store is expected to contain
-  /// thousands of nodes. Each call decrypts only `limit` payloads, preventing
-  /// memory pressure spikes from full-table decryption.
-  ///
-  /// - Parameters:
-  ///   - limit: Maximum number of events to return.
-  ///   - offset: Number of events to skip from the beginning.
-  /// - Returns: Successfully decrypted events in chronological order.
+  /// Fetches a paginated slice of events, decrypting only `limit` payloads.
+  /// **Pure read** — use ``recallAndFetch(limit:offset:)`` to also increment
+  /// recall counters.
   public func events(limit: Int, offset: Int = 0) async -> [SpatialEvent] {
     guard limit > 0 else { return [] }
     do {
@@ -323,22 +257,9 @@ public actor EncryptedMemoryStore: SpatialEventStore {
 
   // MARK: - Recall API (Explicit Side Effect)
 
-  /// Fetches all stored events **and** increments the recall counter for
-  /// each successfully decrypted node.
-  ///
-  /// Use this when the read is a genuine user-initiated "recall" — e.g.,
-  /// feeding events to the Survival Index pipeline. For read-only operations
-  /// (debugging, test assertions), prefer ``allEvents()`` which has no
-  /// write side effects.
-  ///
-  /// ## Survival Index
-  ///
-  /// The recall counter `n` is used in the Survival Index formula:
-  /// ```
-  /// SI(t) = S₀ · Rⁿ · e^(-λt)
-  /// ```
-  ///
-  /// - Returns: All successfully decrypted ``SpatialEvent`` values.
+  /// Fetches all events **and** increments the recall counter (`n` in
+  /// `SI(t) = S₀·Rⁿ·e^(-λt)`) for each. For read-only access, use
+  /// ``allEvents()``.
   public func recallAndFetchAll() async -> [SpatialEvent] {
     do {
       let key = try await keyManager.symmetricKey()
@@ -359,15 +280,8 @@ public actor EncryptedMemoryStore: SpatialEventStore {
     }
   }
 
-  /// Fetches a paginated slice of events **and** increments the recall counter
-  /// for each successfully decrypted node.
-  ///
-  /// For read-only operations, prefer ``events(limit:offset:)`` instead.
-  ///
-  /// - Parameters:
-  ///   - limit: Maximum number of events to return.
-  ///   - offset: Number of events to skip from the beginning.
-  /// - Returns: Successfully decrypted events in chronological order.
+  /// Paginated variant of ``recallAndFetchAll()`` with recall-counter increment.
+  /// For read-only access, use ``events(limit:offset:)``.
   public func recallAndFetch(limit: Int, offset: Int = 0) async -> [SpatialEvent] {
     guard limit > 0 else { return [] }
     do {
@@ -548,15 +462,7 @@ public actor EncryptedMemoryStore: SpatialEventStore {
 
   // MARK: - Private Decrypt Helpers
 
-  /// Decrypts an array of ``RawMemoryNode`` records into ``SpatialEvent`` values.
-  ///
-  /// This is a **pure read** helper — it does not modify any node state.
-  /// Nodes that fail decryption are silently skipped with an error log.
-  ///
-  /// - Parameters:
-  ///   - nodes: The fetched nodes to decrypt.
-  ///   - key: The symmetric key for AES-GCM decryption.
-  /// - Returns: Successfully decrypted events in input order.
+  /// Decrypts nodes into events. Pure read — failed nodes are skipped.
   private func decryptNodes(
     _ nodes: [RawMemoryNode],
     using key: SymmetricKey
@@ -579,12 +485,7 @@ public actor EncryptedMemoryStore: SpatialEventStore {
     return events
   }
 
-  /// Decrypts nodes **and** increments the recall counter on each success.
-  ///
-  /// - Parameters:
-  ///   - nodes: The fetched nodes to decrypt and recall-mark.
-  ///   - key: The symmetric key for AES-GCM decryption.
-  /// - Returns: Successfully decrypted events in input order.
+  /// Decrypts nodes and increments the recall counter on each success.
   private func decryptAndRecall(
     _ nodes: [RawMemoryNode],
     using key: SymmetricKey
