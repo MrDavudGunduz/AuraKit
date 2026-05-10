@@ -115,5 +115,5 @@ custom_rules:
   prefer_async_await:
     name: "Prefer async/await"
     message: "Use async/await instead of completion handlers."
-    regex: "completionHandler|@escaping.*->.*Void\)"
+    regex: "completionHandler|@escaping.*->.*Void\\)"
     severity: warning
