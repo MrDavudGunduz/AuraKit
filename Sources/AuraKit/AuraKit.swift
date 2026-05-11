@@ -7,7 +7,7 @@ import os.log
 
 // # AuraKit
 //
-// AuraKit is an **open-core Swift Package** that provides iOS, macOS, and visionOS
+// AuraKit is a **fully open-source Swift Package** (MIT) that provides iOS, macOS, and visionOS
 // applications with a persistent, privacy-first spatial memory layer.
 //
 // ## Overview
@@ -17,7 +17,7 @@ import os.log
 // them in an on-device AES-GCM encrypted SwiftData store — with no data ever
 // leaving the user's device.
 //
-// The Enterprise tier (`Aura Intelligence`) extends this foundation with:
+// Future phases will extend this foundation with:
 // - On-device LLM semantic pruning via Apple MLX
 // - Survival Index scoring for intelligent memory longevity
 // - Semantic consolidation (cognitive compression)
@@ -70,7 +70,7 @@ import os.log
 // ## Architecture
 //
 // ```
-// CaptureActor → IntelligenceActor (Enterprise) → MemoryActor → Metal Search
+// CaptureActor → IntelligenceActor → MemoryActor → Metal Search
 // ```
 //
 // For complete architecture documentation, see

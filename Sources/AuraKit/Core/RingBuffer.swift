@@ -119,8 +119,7 @@ public actor RingBuffer<Element: Sendable> {
   /// Atomically removes and returns all elements currently in the buffer.
   ///
   /// After this call, the buffer is empty and head/tail are reset to `0`.
-  /// This is the primary handoff point for batch LLM processing in the
-  /// Enterprise tier.
+  /// This is the primary handoff point for batch LLM processing.
   ///
   /// Implementation note: uses a single O(n) forward pass and an atomic
   /// state reset — more efficient than n individual ``dequeue()`` calls.

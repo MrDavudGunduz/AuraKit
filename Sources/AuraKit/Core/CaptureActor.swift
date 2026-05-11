@@ -161,9 +161,9 @@ public actor CaptureActor {
 
   /// Drains all L1 ring buffer events and returns them for downstream processing.
   ///
-  /// After this call, the ring buffer is empty. In the Enterprise tier, the
-  /// returned events are forwarded to `IntelligenceActor` for LLM semantic
-  /// pruning and Survival Index scoring.
+  /// After this call, the ring buffer is empty. The returned events are
+  /// forwarded to `IntelligenceActor` for LLM semantic pruning and
+  /// Survival Index scoring.
   ///
   /// - Returns: All buffered gaze events in FIFO order (oldest first).
   public func flush() async -> [SpatialEvent] {

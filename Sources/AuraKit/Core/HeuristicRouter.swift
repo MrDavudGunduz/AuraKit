@@ -27,7 +27,7 @@ public enum RouteDecision: Sendable, Equatable {
   /// The event should be enqueued in the L1 ``RingBuffer``.
   ///
   /// Used for low-signal gaze events. Events in the buffer are batched and
-  /// forwarded to the LLM intelligence layer (Enterprise tier) when flushed.
+  /// forwarded to the LLM intelligence layer when flushed.
   ///
   /// - Parameter score: The `gazeWeight` from the active config (default `0.3`).
   case enqueueBuffer(score: Double)
