@@ -1,4 +1,8 @@
 <p align="center">
+  <img src="Assets/banner.jpg" alt="AuraKit — Secure, On-Device Spatial Memory" width="100%"/>
+</p>
+
+<p align="center">
   <img src="https://img.shields.io/badge/Swift-6.0-FA7343?logo=swift&logoColor=white" alt="Swift 6.0"/>
   <img src="https://img.shields.io/badge/iOS-17%2B-000000?logo=apple&logoColor=white" alt="iOS 17+"/>
   <img src="https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white" alt="macOS 14+"/>
