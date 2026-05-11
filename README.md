@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="Assets/banner.jpg" alt="AuraKit — Secure, On-Device Spatial Memory" width="100%"/>
+  <img src="assets/banner.jpg" alt="AuraKit — Secure, On-Device Spatial Memory" width="100%"/>
 </p>
 
 <p align="center">
