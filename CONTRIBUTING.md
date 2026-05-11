@@ -28,11 +28,11 @@ This project adheres to the [Contributor Covenant Code of Conduct](https://www.c
 
 | Contribution Type                | Status                                 |
 | -------------------------------- | -------------------------------------- |
-| Bug fixes (Core OSS)             | ✅ Always welcome                      |
+| Bug fixes                        | ✅ Always welcome                      |
 | Performance improvements         | ✅ With Instruments benchmark attached |
-| New API surface (Core)           | 🔶 Discuss in an Issue first           |
+| New API surface                  | 🔶 Discuss in an Issue first           |
 | Documentation improvements       | ✅ No Issue required                   |
-| Enterprise feature contributions | ❌ Closed source — contact maintainers |
+| Intelligence features (LLM/MLX)  | 🔶 Discuss in an Issue first           |
 | New third-party dependencies     | 🔶 Requires strong justification       |
 
 > **Note:** Changes to the public API surface require an associated update to `CHANGELOG.md` and DocC documentation.

@@ -27,7 +27,7 @@ AuraKit is built on a **strict Actor-isolation model** enforced by Swift 6's Str
                 │                          │
 ┌───────────────▼──────────────────────────▼───────────────────────┐
 │                     LAYER 2: INTELLIGENCE                        │
-│                  IntelligenceActor (Enterprise)                   │
+│                  IntelligenceActor                                 │
 │  ┌───────────────────────────────────────────────────────────┐   │
 │  │   MLX LLM Sandbox (network-isolated · Apple Silicon)      │   │
 │  │   Batch inference → Survival Index scoring                │   │
@@ -50,7 +50,7 @@ AuraKit is built on a **strict Actor-isolation model** enforced by Swift 6's Str
                                 │
 ┌───────────────────────────────▼──────────────────────────────────┐
 │                       LAYER 4: SEARCH                            │
-│                     Metal Search Layer (Enterprise)               │
+│                     Metal Search Layer                            │
 │          GPU Cosine Similarity via MTLComputePipelineState        │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -120,7 +120,7 @@ Write pointer ──►  [■][■][■][■][■][ ][ ][ ][ ][ ]
 
 ---
 
-### `IntelligenceActor` (Enterprise)
+### `IntelligenceActor`
 
 **Responsibility:** Batch-evaluate L1 buffer contents using the on-device LLM and produce Survival Index scores.
 
@@ -269,7 +269,7 @@ public struct AuraConfiguration: Sendable, Equatable {
 
 ---
 
-## Metal Search Architecture (Enterprise)
+## Metal Search Architecture
 
 ### Shader Pipeline
 

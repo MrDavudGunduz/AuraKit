@@ -120,7 +120,7 @@ All `encryptedPayload` and `encryptedSummary` fields are **already encrypted** b
 
 ---
 
-## On-Device LLM — Network Isolation (Enterprise)
+## On-Device LLM — Network Isolation
 
 The `IntelligenceActor` executes an Apple Silicon MLX model inside the main app process with **zero network access**.
 
@@ -233,7 +233,7 @@ Before shipping an app that uses AuraKit, verify:
 - [ ] `AuraConfiguration` does not expose raw symmetric keys to the host app
 - [ ] `RawMemoryNode.encryptedPayload` is never logged (ensure `os_log` categories are private)
 - [ ] SwiftData store file is excluded from iCloud backup unless CloudKit E2EE is configured
-- [ ] App entitlements do not include `com.apple.security.network.client` in the Intelligence extension if using Enterprise tier
+- [ ] App entitlements do not include `com.apple.security.network.client` in the Intelligence module
 - [ ] Keychain item accessibility is set to `.whenUnlockedThisDeviceOnly` (not `.always`)
 - [ ] Instruments → Leaks run confirms no symmetric key material is retained beyond `MemoryActor` closure scope
 

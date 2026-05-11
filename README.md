@@ -5,7 +5,7 @@
   <img src="https://img.shields.io/badge/visionOS-1%2B-000000?logo=apple&logoColor=white" alt="visionOS 1+"/>
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License"/>
   <img src="https://img.shields.io/badge/SPM-compatible-brightgreen" alt="SPM Compatible"/>
-  <img src="https://img.shields.io/badge/Tests-168_passing-success" alt="168 Tests Passing"/>
+  <img src="https://img.shields.io/badge/Tests-199_passing-success" alt="199 Tests Passing"/>
 </p>
 
 <h1 align="center">AuraKit</h1>
@@ -19,7 +19,7 @@
 
 ## Overview
 
-AuraKit is an **open-core Swift Package** that gives your 3D/spatial applications a persistent, privacy-first memory layer. It captures user interactions (gaze, touch, spatial movement) using a race-free Actor pipeline, scores them with a heuristic bypass engine, stores them in an on-device encrypted SwiftData database, and — in the Enterprise tier — compresses aging memories via an on-device LLM using Apple Silicon MLX.
+AuraKit is a **fully open-source Swift Package** (MIT) that gives your 3D/spatial applications a persistent, privacy-first memory layer. It captures user interactions (gaze, touch, spatial movement) using a race-free Actor pipeline, scores them with a heuristic bypass engine, stores them in an on-device encrypted SwiftData database, and compresses aging memories via an on-device LLM using Apple Silicon MLX.
 
 | Layer        | Technology                    | Description                                 |
 | ------------ | ----------------------------- | ------------------------------------------- |
@@ -31,26 +31,26 @@ AuraKit is an **open-core Swift Package** that gives your 3D/spatial application
 
 ---
 
-## Feature Matrix
+## Features
 
-| Feature                                    | AuraKit Core (OSS) | Aura Intelligence (Enterprise) |
-| ------------------------------------------ | :----------------: | :----------------------------: |
-| Swift 6 Actor capture pipeline             |         ✅         |               ✅               |
-| Ring Buffer (60fps, zero leak)             |         ✅         |               ✅               |
-| Heuristic Bypass (Touch → max score)       |         ✅         |               ✅               |
-| `AuraConfiguration` Dependency Injection   |         ✅         |               ✅               |
-| SwiftData `RawMemoryNode` schema           |         ✅         |               ✅               |
-| CryptoKit AES-GCM (Secure Enclave)         |         ✅         |               ✅               |
-| `EncryptedMemoryStore` with paginated API  |         ✅         |               ✅               |
-| Zero-trust tamper detection                |         ✅         |               ✅               |
-| Survival Index recall counter              |         ✅         |               ✅               |
-| CloudKit E2EE Sync                         |         ✅         |               ✅               |
-| Privacy Manifest (`PrivacyInfo.xcprivacy`) |         ✅         |               ✅               |
-| Survival Index scoring algorithm           |         ❌         |               ✅               |
-| MLX On-Device LLM sandbox                  |         ❌         |               ✅               |
-| Semantic Consolidation (Batch LLM pruning) |         ❌         |               ✅               |
-| Inversion of Control (IoC) compress API    |         ❌         |               ✅               |
-| Metal Cosine Similarity Search             |         ❌         |               ✅               |
+| Feature                                    | Status |
+| ------------------------------------------ | :----: |
+| Swift 6 Actor capture pipeline             |   ✅   |
+| Ring Buffer (60fps, zero leak)             |   ✅   |
+| Heuristic Bypass (Touch → max score)       |   ✅   |
+| `AuraConfiguration` Dependency Injection   |   ✅   |
+| SwiftData `RawMemoryNode` schema           |   ✅   |
+| CryptoKit AES-GCM (Secure Enclave)         |   ✅   |
+| `EncryptedMemoryStore` with paginated API  |   ✅   |
+| Zero-trust tamper detection                |   ✅   |
+| Survival Index recall counter              |   ✅   |
+| CloudKit E2EE Sync                         |   ✅   |
+| Privacy Manifest (`PrivacyInfo.xcprivacy`) |   ✅   |
+| Survival Index scoring algorithm           |   ⏳   |
+| MLX On-Device LLM sandbox                  |   ⏳   |
+| Semantic Consolidation (Batch LLM pruning) |   ⏳   |
+| Inversion of Control (IoC) compress API    |   ⏳   |
+| Metal Cosine Similarity Search             |   ⏳   |
 
 ---
 
@@ -145,7 +145,7 @@ let recalled = await encryptedStore.recallAndFetchAll()
 let recalledPage = await encryptedStore.recallAndFetch(limit: 50)
 ```
 
-### 4. Trigger Memory Compression (Enterprise IoC API)
+### 4. Trigger Memory Compression (IoC API)
 
 ```swift
 // Call during loading screens or in-game sleep sessions to avoid FPS drops
@@ -178,7 +178,7 @@ try await AuraKit.shared.memory.compressIdleMemories()
 └──────────────────────────┬──────────────────────────┘
                            │ CloudKit E2EE
 ┌──────────────────────────▼──────────────────────────┐
-│              Metal Search Layer (Enterprise)        │
+│              Metal Search Layer                     │
 │           GPU Cosine Similarity (Shader)            │
 └─────────────────────────────────────────────────────┘
 ```
@@ -217,5 +217,4 @@ See [SECURITY.md](./SECURITY.md) for full details.
 
 ## License
 
-AuraKit **Core** is released under the [MIT License](./LICENSE).  
-**Aura Intelligence** (Enterprise features) requires a commercial license. Contact [davud.gunduz01@gmail.com](mailto:davud.gunduz01@gmail.com) for details.
+AuraKit is released under the [MIT License](./LICENSE).

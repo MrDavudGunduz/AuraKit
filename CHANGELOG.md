@@ -37,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `PrivacyInfo.xcprivacy`: Privacy Manifest declaring no tracking, no external data transmission
 - `Phase2HardeningTests.swift`: Pagination and recall tracking test suite
 - `ZeroTrustTests.swift`: Wrong-key tamper detection and ciphertext integrity verification tests
+- `Phase2AcceptanceCriteriaTests.swift`: Acceptance criteria verification — ciphertext format, CloudKit E2EE config, Privacy Manifest compliance
+- `MemoryStore.batchAppend()`: Dedicated single-pass batch append override — eliminates N sequential actor hops
+- CI: Privacy Manifest validation step (`plutil -lint`, required keys, tracking disabled verification)
 
 ### Changed
 
@@ -63,8 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `.gitignore`: added `Package.resolved` (SPM library best practice), recursive `.DS_Store` matching, additional IDE state exclusions
 - CI pipeline: added release build step, coverage artifact upload (txt + lcov), DocC generation step, `Package.swift`-based cache key
-- Test suite: **134 tests across 18 suites** — Thread Sanitizer verified, zero data races
-- Documentation: all files updated to reflect Phase 2 completion and current API surface
+- Test suite: **199 tests across 33 suites** — Thread Sanitizer verified, zero data races
+- Documentation: ROADMAP Phase 2 acceptance criteria marked complete with test references
 
 ---
 
@@ -90,14 +93,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `PrivacyInfo.xcprivacy` manifest declaring no external data transmission
 - Production hardening: zero `force_try`, Keychain diagnostic logging, deterministic save control
 
-#### Phase 3 — On-Device LLM (Weeks 5–6) — _Enterprise_
+#### Phase 3 — On-Device LLM (Weeks 5–6)
 
 - `IntelligenceActor`: Network-isolated MLX language model execution on Apple Silicon
 - Survival Index algorithm: `SI(t) = S₀ · Rⁿ · e^(-λt)` with configurable decay constant
 - Asynchronous batch processing: L1 buffer serialized to JSON → single LLM inference pass
 - Automatic pruning of `RawMemoryNode` records below configurable SI threshold
 
-#### Phase 4 — Cognitive Compression (Week 7) — _Enterprise_
+#### Phase 4 — Cognitive Compression (Week 7)
 
 - Semantic Consolidation Engine: clusters of aging low-SI nodes merged into a single `MemoryArchiveNode` via LLM-generated natural-language summary
 - IoC Compression API: `AuraKit.shared.memory.compressIdleMemories()` — `async throws`, developer-triggered
@@ -109,7 +112,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Metal Compute Shader (`cosine_similarity.metal`): GPU-accelerated cosine similarity search over all stored memory vectors
 - `MTLComputePipelineState`-based search host: < 0.5ms for 1,000 vectors on A17 Pro
 - `swift package generate-documentation` — DocC site hosted on GitHub Pages
-- Enterprise plugin license validation via JWT, cached in Keychain
+- DocC documentation hosted on GitHub Pages
 - Instruments profiling report: < 1ms main thread overhead per frame confirmed
 
 ---
@@ -118,7 +121,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 | Version | Date           | Summary                                                                           |
 | ------- | -------------- | --------------------------------------------------------------------------------- |
-| 1.0.0   | Planned Week 8 | Initial open-source release of AuraKit Core + Aura Intelligence Enterprise plugin |
+| 1.0.0   | Planned Week 8 | Initial open-source release of AuraKit — full framework under MIT |
 
 ---
 

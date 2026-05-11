@@ -24,7 +24,7 @@
   - [CaptureActor](#captureactor)
   - [Encryption](#encryption)
   - [MemoryActor](#memoryactor)
-  - [Survival Index (Enterprise)](#survival-index-enterprise)
+  - [Survival Index](#survival-index)
 - [Mocking Strategy](#mocking-strategy)
 - [Code Coverage](#code-coverage)
 - [Continuous Integration](#continuous-integration)
@@ -59,7 +59,7 @@ Tests/AuraKitTests/
 ├── Configuration/
 │   └── AuraConfigurationTests.swift ← Default values, weight clamping, Sendable
 │
-├── Intelligence/                   ← Enterprise tier (conditional compilation)
+├── Intelligence/
 │   └── SurvivalIndexTests.swift    ← SI formula, decay, recall multiplier
 │
 └── Helpers/
@@ -166,7 +166,7 @@ extension Tag {
     @Tag static var concurrency: Self
     @Tag static var encryption: Self
     @Tag static var performance: Self
-    @Tag static var enterprise: Self
+    @Tag static var intelligence: Self
 }
 
 @Test("CaptureActor serialises concurrent writes", .tags(.concurrency))
@@ -453,7 +453,7 @@ struct MemoryActorTests {
 }
 ```
 
-### Survival Index (Enterprise)
+### Survival Index
 
 ```swift
 @Suite("SurvivalIndex formula")
@@ -597,7 +597,7 @@ xcrun llvm-cov export "$BINARY" \
 | `Sources/AuraKit/Models`        | 85%     | Data models, init paths                  |
 | Encryption round-trips          | 100%    | Zero tolerance for untested crypto paths |
 | Error handling paths            | 70%     | All `catch` blocks exercised             |
-| Enterprise (`AuraIntelligence`) | 80%     | Complex LLM paths harder to mock         |
+| Intelligence (`IntelligenceActor`) | 80%     | Complex LLM paths harder to mock         |
 
 ---
 
