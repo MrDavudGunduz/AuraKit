@@ -11,6 +11,10 @@ env:
   # Minimum acceptable line coverage percentage.
   # The pipeline will FAIL if coverage drops below this threshold.
   COVERAGE_THRESHOLD: 80
+  # Opt into Node.js 24 runtime for all JavaScript-based actions.
+  # Required to suppress Node.js 20 deprecation warnings and ensure
+  # forward compatibility before the June 2, 2026 enforcement date.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   # ── macOS Native Tests ───────────────────────────────────────────────────
@@ -35,7 +39,7 @@ jobs:
           xcode-version: latest-stable
 
       - name: Cache SPM
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .build
           key: ${{ runner.os }}-spm-${{ hashFiles('Package.swift') }}
@@ -101,7 +105,7 @@ jobs:
 
       - name: Upload Coverage Artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: code-coverage-${{ matrix.os }}
           path: |
@@ -117,6 +121,39 @@ jobs:
             --target AuraKit \
             --disable-indexing \
             --output-path .build/docs 2>&1 || true
+
+      # ── Privacy Manifest ────────────────────────────────────────────────
+
+      - name: Validate Privacy Manifest
+        run: |
+          MANIFEST="Sources/AuraKit/PrivacyInfo.xcprivacy"
+          if [ ! -f "$MANIFEST" ]; then
+            echo "❌ PrivacyInfo.xcprivacy not found at $MANIFEST"
+            exit 1
+          fi
+
+          # Validate plist syntax
+          if ! plutil -lint "$MANIFEST"; then
+            echo "❌ PrivacyInfo.xcprivacy is not a valid plist."
+            exit 1
+          fi
+
+          # Verify required privacy keys exist
+          for KEY in NSPrivacyTracking NSPrivacyTrackingDomains NSPrivacyCollectedDataTypes NSPrivacyAccessedAPITypes; do
+            if ! plutil -extract "$KEY" raw "$MANIFEST" > /dev/null 2>&1; then
+              echo "❌ Required key '$KEY' missing from PrivacyInfo.xcprivacy"
+              exit 1
+            fi
+          done
+
+          # Verify tracking is disabled
+          TRACKING=$(plutil -extract NSPrivacyTracking raw "$MANIFEST" 2>/dev/null)
+          if [ "$TRACKING" != "false" ] && [ "$TRACKING" != "0" ]; then
+            echo "❌ NSPrivacyTracking must be false (got: $TRACKING)"
+            exit 1
+          fi
+
+          echo "✅ PrivacyInfo.xcprivacy passes all validation checks."
 
   # ── iOS Simulator Tests ──────────────────────────────────────────────────
   test-ios:
