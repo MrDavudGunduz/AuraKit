@@ -118,6 +118,35 @@ public actor MemoryStore: SpatialEventStore {
     }
   }
 
+  /// Appends multiple events in a single batch operation.
+  ///
+  /// Unlike the default `SpatialEventStore` implementation (which falls back
+  /// to sequential `append()` calls with N actor hops), this override processes
+  /// all events in a single actor-isolated pass — eliminating inter-hop latency
+  /// for burst ingestion scenarios.
+  ///
+  /// In bounded mode, FIFO eviction is applied per-event as in `append()`.
+  /// In unbounded mode, all events are appended in a single array operation.
+  ///
+  /// - Parameter events: The events to persist.
+  public func batchAppend(_ events: [SpatialEvent]) {
+    guard !events.isEmpty else { return }
+
+    if isBounded {
+      for event in events {
+        storage[writeIndex] = event
+        writeIndex = (writeIndex + 1) % capacity
+        if _count < capacity { _count += 1 }
+      }
+    } else {
+      storage.reserveCapacity(storage.count + events.count)
+      for event in events {
+        storage.append(event)
+        _count += 1
+      }
+    }
+  }
+
   // MARK: - Reads
 
   /// Returns a snapshot of all stored events in chronological order.
