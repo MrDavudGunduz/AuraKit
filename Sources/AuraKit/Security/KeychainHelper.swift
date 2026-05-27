@@ -16,8 +16,15 @@ import os.log
 /// - `kSecAttrAccessible: .whenUnlockedThisDeviceOnly` — not backed up to iCloud
 /// - `kSecAttrSynchronizable: false` — local-only
 ///
+/// ## Access Group Support
+///
+/// All methods accept an optional `accessGroup` parameter for App Extension
+/// and multi-target Keychain sharing. When `nil` (default), the Keychain item
+/// belongs to the calling app's default access group — matching the original
+/// pre-access-group behaviour.
+///
 /// This is intentionally a minimal enum, not a general-purpose Keychain library.
-/// It covers exactly the two use cases AuraKit needs: salt storage and SE key references.
+/// It covers exactly the use cases AuraKit needs: salt storage and SE key references.
 enum KeychainHelper {
 
   /// Logger for Keychain diagnostic output.
@@ -26,24 +33,40 @@ enum KeychainHelper {
     category: "KeychainHelper"
   )
 
+  // MARK: - Store
+
   /// Stores data in the Keychain, replacing any existing item with the same
   /// service/account pair.
   ///
+  /// - Parameters:
+  ///   - data: The data to store.
+  ///   - service: The Keychain service identifier.
+  ///   - account: The Keychain account identifier.
+  ///   - accessGroup: Optional Keychain access group for App Extension sharing.
+  ///     Pass `nil` (default) to use the app's default access group.
   /// - Returns: `true` if the item was stored successfully; `false` if
   ///   `SecItemAdd` returned an error status (logged at error level).
   @discardableResult
-  static func store(data: Data, service: String, account: String) -> Bool {
+  static func store(
+    data: Data,
+    service: String,
+    account: String,
+    accessGroup: String? = nil
+  ) -> Bool {
     // Delete any existing item first (idempotent)
-    let deleteQuery: [String: Any] = [
+    var deleteQuery: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service,
       kSecAttrAccount as String: account,
     ]
+    if let group = accessGroup {
+      deleteQuery[kSecAttrAccessGroup as String] = group
+    }
     SecItemDelete(deleteQuery as CFDictionary)
 
     // Add the new item — uses Swift Bool literals instead of force-unwrapped
     // CFBoolean constants for safety and SwiftLint compliance.
-    let addQuery: [String: Any] = [
+    var addQuery: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service,
       kSecAttrAccount as String: account,
@@ -51,6 +74,9 @@ enum KeychainHelper {
       kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
       kSecAttrSynchronizable as String: false,
     ]
+    if let group = accessGroup {
+      addQuery[kSecAttrAccessGroup as String] = group
+    }
     let status = SecItemAdd(addQuery as CFDictionary, nil)
     if status != errSecSuccess {
       KeychainHelper.logger.error(
@@ -60,15 +86,31 @@ enum KeychainHelper {
     return status == errSecSuccess
   }
 
+  // MARK: - Retrieve
+
   /// Retrieves data from the Keychain, or returns `nil` if no matching item exists.
-  static func retrieve(service: String, account: String) -> Data? {
-    let query: [String: Any] = [
+  ///
+  /// - Parameters:
+  ///   - service: The Keychain service identifier.
+  ///   - account: The Keychain account identifier.
+  ///   - accessGroup: Optional Keychain access group for App Extension sharing.
+  ///     Pass `nil` (default) to use the app's default access group.
+  /// - Returns: The stored data, or `nil` if no matching item exists.
+  static func retrieve(
+    service: String,
+    account: String,
+    accessGroup: String? = nil
+  ) -> Data? {
+    var query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service,
       kSecAttrAccount as String: account,
       kSecReturnData as String: true,
       kSecMatchLimit as String: kSecMatchLimitOne,
     ]
+    if let group = accessGroup {
+      query[kSecAttrAccessGroup as String] = group
+    }
 
     var result: AnyObject?
     let status = SecItemCopyMatching(query as CFDictionary, &result)
@@ -77,14 +119,30 @@ enum KeychainHelper {
     return result as? Data
   }
 
+  // MARK: - Delete
+
   /// Deletes a specific item from the Keychain.
+  ///
+  /// - Parameters:
+  ///   - service: The Keychain service identifier.
+  ///   - account: The Keychain account identifier.
+  ///   - accessGroup: Optional Keychain access group for App Extension sharing.
+  ///     Pass `nil` (default) to use the app's default access group.
+  /// - Returns: `true` if the item was deleted successfully.
   @discardableResult
-  static func delete(service: String, account: String) -> Bool {
-    let query: [String: Any] = [
+  static func delete(
+    service: String,
+    account: String,
+    accessGroup: String? = nil
+  ) -> Bool {
+    var query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service,
       kSecAttrAccount as String: account,
     ]
+    if let group = accessGroup {
+      query[kSecAttrAccessGroup as String] = group
+    }
     return SecItemDelete(query as CFDictionary) == errSecSuccess
   }
 }

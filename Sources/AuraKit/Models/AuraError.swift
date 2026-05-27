@@ -4,6 +4,7 @@
 // Domain-specific error type for all AuraKit failure paths.
 // Phase 1: notConfigured, invalidConfiguration
 // Phase 2: encryptionFailed, decryptionFailed, secureEnclaveUnavailable, persistenceFailed
+// Phase 2.1: keyRotationFailed
 
 import Foundation
 
@@ -69,6 +70,16 @@ public enum AuraError: Error, Sendable, Equatable {
   ///
   /// - Parameter reason: A diagnostic description of the persistence failure.
   case persistenceFailed(reason: String)
+
+  // MARK: - Phase 2.1: Key Rotation
+
+  /// A key rotation operation failed.
+  ///
+  /// This may occur when the new salt cannot be generated, the old key cannot
+  /// be preserved for migration, or the new key derivation fails.
+  ///
+  /// - Parameter reason: A diagnostic description of the rotation failure.
+  case keyRotationFailed(reason: String)
 }
 
 // MARK: - LocalizedError
@@ -90,6 +101,8 @@ extension AuraError: LocalizedError {
       return "[AuraKit] Secure Enclave unavailable: \(reason)"
     case .persistenceFailed(let reason):
       return "[AuraKit] Persistence failed: \(reason)"
+    case .keyRotationFailed(let reason):
+      return "[AuraKit] Key rotation failed: \(reason)"
     }
   }
 }
@@ -111,6 +124,7 @@ extension AuraError: CustomNSError {
     case .decryptionFailed: return 1_004
     case .secureEnclaveUnavailable: return 1_005
     case .persistenceFailed: return 1_006
+    case .keyRotationFailed: return 1_007
     }
   }
 }
