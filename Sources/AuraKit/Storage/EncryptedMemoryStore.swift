@@ -4,6 +4,10 @@
 // Phase 2 drop-in replacement for MemoryStore. Conforms to SpatialEventStore
 // and writes every event as AES-GCM ciphertext to SwiftData.
 // Zero plaintext touches disk — ever.
+//
+// Metadata queries → EncryptedMemoryStore+Queries.swift
+// Decrypt helpers  → EncryptedMemoryStore+Decryption.swift
+// Streaming API    → EncryptedMemoryStore+Streaming.swift
 
 import CryptoKit
 import Foundation
@@ -31,7 +35,7 @@ public actor EncryptedMemoryStore: SpatialEventStore {
 
   // MARK: - Internal Logger
 
-  private static let logger = Logger(
+  static let logger = Logger(
     subsystem: "com.aurakit.framework",
     category: "EncryptedMemoryStore"
   )
@@ -40,19 +44,19 @@ public actor EncryptedMemoryStore: SpatialEventStore {
 
   /// The SwiftData model context, created from the injected container.
   /// Owned exclusively by this actor — never shared across concurrency domains.
-  private let modelContext: ModelContext
+  let modelContext: ModelContext
 
   /// The key manager providing the Secure Enclave–derived symmetric key.
-  private let keyManager: KeyManager
+  let keyManager: KeyManager
 
   /// Stateless encryption/decryption service.
-  private let encryptionService: EncryptionService
+  let encryptionService: EncryptionService
 
   /// JSON encoder used to serialise `SpatialEvent` before encryption.
-  private let encoder = JSONEncoder()
+  let encoder = JSONEncoder()
 
   /// JSON decoder used to deserialise `SpatialEvent` after decryption.
-  private let decoder = JSONDecoder()
+  let decoder = JSONDecoder()
 
   /// Cumulative count of events that failed to persist due to key, encryption,
   /// or save errors. Monitor this value in production telemetry to detect
@@ -124,13 +128,13 @@ public actor EncryptedMemoryStore: SpatialEventStore {
         try modelContext.save()
       } catch {
         _droppedEventCount += 1
-        EncryptedMemoryStore.logger.error(
+        Self.logger.error(
           "[AuraKit] EncryptedMemoryStore: Failed to save context — \(error.localizedDescription)"
         )
       }
     } catch {
       _droppedEventCount += 1
-      EncryptedMemoryStore.logger.error(
+      Self.logger.error(
         "[AuraKit] EncryptedMemoryStore: Encryption failed for event \(event.id) — \(error.localizedDescription)"
       )
     }
@@ -168,7 +172,7 @@ public actor EncryptedMemoryStore: SpatialEventStore {
           insertedCount += 1
         } catch {
           _droppedEventCount += 1
-          EncryptedMemoryStore.logger.error(
+          Self.logger.error(
             "[AuraKit] EncryptedMemoryStore: Encryption failed for event \(event.id) — \(error.localizedDescription)"
           )
         }
@@ -178,18 +182,18 @@ public actor EncryptedMemoryStore: SpatialEventStore {
 
       do {
         try modelContext.save()
-        EncryptedMemoryStore.logger.debug(
+        Self.logger.debug(
           "[AuraKit] EncryptedMemoryStore: Batch persisted \(insertedCount) events in a single save."
         )
       } catch {
         _droppedEventCount += insertedCount
-        EncryptedMemoryStore.logger.error(
+        Self.logger.error(
           "[AuraKit] EncryptedMemoryStore: Batch save failed — \(error.localizedDescription)"
         )
       }
     } catch {
       _droppedEventCount += events.count
-      EncryptedMemoryStore.logger.error(
+      Self.logger.error(
         "[AuraKit] EncryptedMemoryStore: Key retrieval failed during batch — \(error.localizedDescription)"
       )
     }
@@ -209,7 +213,7 @@ public actor EncryptedMemoryStore: SpatialEventStore {
       let nodes = try modelContext.fetch(descriptor)
       return decryptNodes(nodes, using: key)
     } catch {
-      EncryptedMemoryStore.logger.error(
+      Self.logger.error(
         "[AuraKit] EncryptedMemoryStore: Key retrieval failed — \(error.localizedDescription)"
       )
       return []
@@ -233,7 +237,7 @@ public actor EncryptedMemoryStore: SpatialEventStore {
       let nodes = try modelContext.fetch(descriptor)
       return decryptNodes(nodes, using: key)
     } catch {
-      EncryptedMemoryStore.logger.error(
+      Self.logger.error(
         "[AuraKit] EncryptedMemoryStore: Paginated fetch failed — \(error.localizedDescription)"
       )
       return []
@@ -247,7 +251,7 @@ public actor EncryptedMemoryStore: SpatialEventStore {
         let descriptor = FetchDescriptor<RawMemoryNode>()
         return try modelContext.fetchCount(descriptor)
       } catch {
-        EncryptedMemoryStore.logger.error(
+        Self.logger.error(
           "[AuraKit] EncryptedMemoryStore: fetchCount failed — \(error.localizedDescription)"
         )
         return 0
@@ -273,7 +277,7 @@ public actor EncryptedMemoryStore: SpatialEventStore {
       persistRecallCounters(eventCount: events.count)
       return events
     } catch {
-      EncryptedMemoryStore.logger.error(
+      Self.logger.error(
         "[AuraKit] EncryptedMemoryStore: Key retrieval failed — \(error.localizedDescription)"
       )
       return []
@@ -298,107 +302,10 @@ public actor EncryptedMemoryStore: SpatialEventStore {
       persistRecallCounters(eventCount: events.count)
       return events
     } catch {
-      EncryptedMemoryStore.logger.error(
+      Self.logger.error(
         "[AuraKit] EncryptedMemoryStore: Paginated recall fetch failed — \(error.localizedDescription)"
       )
       return []
-    }
-  }
-
-  // MARK: - Metadata Queries
-
-  /// Counts memory nodes matching the given event type.
-  ///
-  /// This query operates on unencrypted metadata only — no decryption occurs.
-  /// Returns a `Sendable` `Int` suitable for cross-actor access.
-  ///
-  /// - Parameter eventType: The ``SpatialEventType`` to filter by.
-  /// - Returns: The number of matching nodes.
-  public func fetchNodeCount(eventType: SpatialEventType) async -> Int {
-    do {
-      let typeValue = eventType.rawValue
-      let descriptor = FetchDescriptor<RawMemoryNode>(
-        predicate: #Predicate<RawMemoryNode> { $0.eventType == typeValue }
-      )
-      return try modelContext.fetchCount(descriptor)
-    } catch {
-      EncryptedMemoryStore.logger.error(
-        "[AuraKit] EncryptedMemoryStore: fetchNodeCount failed — \(error.localizedDescription)"
-      )
-      return 0
-    }
-  }
-
-  /// Fetches memory nodes filtered by event type and sorted by score.
-  ///
-  /// This query operates on unencrypted metadata only — no decryption occurs.
-  ///
-  /// - Note: `RawMemoryNode` is a `@Model` class and is **not** `Sendable`.
-  ///   This method should be called from within the actor's isolation domain
-  ///   or from methods that project results to `Sendable` types (e.g., counts).
-  ///
-  /// - Parameters:
-  ///   - eventType: The ``SpatialEventType`` to filter by.
-  ///   - limit: Maximum number of results. Pass `nil` for all matching nodes.
-  /// - Returns: Matching ``RawMemoryNode`` records, highest score first.
-  public func fetchNodes(
-    eventType: SpatialEventType,
-    limit: Int? = nil
-  ) -> [RawMemoryNode] {
-    do {
-      let typeValue = eventType.rawValue
-      var descriptor = FetchDescriptor<RawMemoryNode>(
-        predicate: #Predicate<RawMemoryNode> { $0.eventType == typeValue },
-        sortBy: [SortDescriptor(\.score, order: .reverse)]
-      )
-      descriptor.fetchLimit = limit
-
-      return try modelContext.fetch(descriptor)
-    } catch {
-      EncryptedMemoryStore.logger.error(
-        "[AuraKit] EncryptedMemoryStore: fetchNodes failed — \(error.localizedDescription)"
-      )
-      return []
-    }
-  }
-
-  /// Returns the `recalled` counter for a specific node, identified by UUID.
-  ///
-  /// This is a Sendable-safe projection of ``RawMemoryNode/recalled`` metadata,
-  /// suitable for cross-actor access in test assertions and Survival Index queries.
-  ///
-  /// - Parameter id: The UUID of the target node.
-  /// - Returns: The recalled count, or `nil` if no matching node exists.
-  public func recalledCount(for id: UUID) async -> Int? {
-    do {
-      var descriptor = FetchDescriptor<RawMemoryNode>(
-        predicate: #Predicate<RawMemoryNode> { $0.id == id }
-      )
-      descriptor.fetchLimit = 1
-
-      let results = try modelContext.fetch(descriptor)
-      return results.first?.recalled
-    } catch {
-      return nil
-    }
-  }
-
-  /// Fetches the raw ciphertext for a specific node, for SQLite inspection
-  /// and ciphertext verification during testing.
-  ///
-  /// - Parameter id: The UUID of the target node.
-  /// - Returns: The encrypted payload `Data`, or `nil` if not found.
-  public func rawCiphertext(for id: UUID) async -> Data? {
-    do {
-      var descriptor = FetchDescriptor<RawMemoryNode>(
-        predicate: #Predicate<RawMemoryNode> { $0.id == id }
-      )
-      descriptor.fetchLimit = 1
-
-      let results = try modelContext.fetch(descriptor)
-      return results.first?.encryptedPayload
-    } catch {
-      return nil
     }
   }
 
@@ -427,13 +334,13 @@ public actor EncryptedMemoryStore: SpatialEventStore {
 
       try modelContext.save()
 
-      EncryptedMemoryStore.logger.info(
+      Self.logger.info(
         "[AuraKit] EncryptedMemoryStore: Pruned \(deletedCount) nodes below threshold \(threshold)."
       )
 
       return deletedCount
     } catch {
-      EncryptedMemoryStore.logger.error(
+      Self.logger.error(
         "[AuraKit] EncryptedMemoryStore: deleteNodes failed — \(error.localizedDescription)"
       )
       return 0
@@ -450,78 +357,12 @@ public actor EncryptedMemoryStore: SpatialEventStore {
       try modelContext.delete(model: MemoryArchiveNode.self)
       try modelContext.save()
 
-      EncryptedMemoryStore.logger.info(
+      Self.logger.info(
         "[AuraKit] EncryptedMemoryStore: All nodes cleared."
       )
     } catch {
-      EncryptedMemoryStore.logger.error(
+      Self.logger.error(
         "[AuraKit] EncryptedMemoryStore: clear() failed — \(error.localizedDescription)"
-      )
-    }
-  }
-
-  // MARK: - Private Decrypt Helpers
-
-  /// Decrypts nodes into events. Pure read — failed nodes are skipped.
-  private func decryptNodes(
-    _ nodes: [RawMemoryNode],
-    using key: SymmetricKey
-  ) -> [SpatialEvent] {
-    var events: [SpatialEvent] = []
-    events.reserveCapacity(nodes.count)
-
-    for node in nodes {
-      do {
-        let plaintext = try encryptionService.decrypt(node.encryptedPayload, using: key)
-        let event = try decoder.decode(SpatialEvent.self, from: plaintext)
-        events.append(event)
-      } catch {
-        EncryptedMemoryStore.logger.error(
-          "[AuraKit] EncryptedMemoryStore: Failed to decrypt node \(node.id) — \(error.localizedDescription)"
-        )
-      }
-    }
-
-    return events
-  }
-
-  /// Decrypts nodes and increments the recall counter on each success.
-  private func decryptAndRecall(
-    _ nodes: [RawMemoryNode],
-    using key: SymmetricKey
-  ) -> [SpatialEvent] {
-    var events: [SpatialEvent] = []
-    events.reserveCapacity(nodes.count)
-
-    for node in nodes {
-      do {
-        let plaintext = try encryptionService.decrypt(node.encryptedPayload, using: key)
-        let event = try decoder.decode(SpatialEvent.self, from: plaintext)
-        events.append(event)
-
-        // Increment recall counter for Survival Index: SI(t) = S₀ · Rⁿ · e^(-λt)
-        node.recalled += 1
-      } catch {
-        EncryptedMemoryStore.logger.error(
-          "[AuraKit] EncryptedMemoryStore: Failed to decrypt node \(node.id) — \(error.localizedDescription)"
-        )
-      }
-    }
-
-    return events
-  }
-
-  /// Persists recall counter increments to the backing store.
-  ///
-  /// - Parameter eventCount: Number of events that were successfully
-  ///   decrypted and recall-incremented. If zero, no save is attempted.
-  private func persistRecallCounters(eventCount: Int) {
-    guard eventCount > 0 else { return }
-    do {
-      try modelContext.save()
-    } catch {
-      EncryptedMemoryStore.logger.error(
-        "[AuraKit] EncryptedMemoryStore: Failed to persist recall counters — \(error.localizedDescription)"
       )
     }
   }
