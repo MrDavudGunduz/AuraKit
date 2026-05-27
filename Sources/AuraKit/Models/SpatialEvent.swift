@@ -181,3 +181,58 @@ extension SpatialEventKind {
     .interaction(type: type, position: CodableSIMD3(rawPosition))
   }
 }
+
+// MARK: - Top-Level SpatialEvent Factory Methods
+
+extension SpatialEvent {
+
+  /// Creates a gaze event at the given world-space position.
+  ///
+  /// ```swift
+  /// let event = SpatialEvent.gaze(at: SIMD3(0.5, 1.2, -0.8))
+  /// await capture.record(event: event)
+  /// ```
+  ///
+  /// - Parameter position: The world-space position the user is looking at.
+  /// - Returns: A ``SpatialEvent`` with kind `.gaze` and score `0` (overwritten by router).
+  public static func gaze(at position: SIMD3<Float>) -> SpatialEvent {
+    SpatialEvent(kind: .gaze(rawPosition: position))
+  }
+
+  /// Creates a touch interaction event at the given world-space position.
+  ///
+  /// ```swift
+  /// let event = SpatialEvent.touch(at: SIMD3(0.1, 0.9, -1.0))
+  /// await capture.record(event: event)
+  /// ```
+  ///
+  /// - Parameter position: The world-space position of the touch.
+  /// - Returns: A ``SpatialEvent`` with kind `.interaction(type: .touch)`.
+  public static func touch(at position: SIMD3<Float>) -> SpatialEvent {
+    SpatialEvent(kind: .interaction(type: .touch, rawPosition: position))
+  }
+
+  /// Creates a move interaction event at the given world-space position.
+  ///
+  /// - Parameter position: The world-space position of the movement.
+  /// - Returns: A ``SpatialEvent`` with kind `.interaction(type: .move)`.
+  public static func move(at position: SIMD3<Float>) -> SpatialEvent {
+    SpatialEvent(kind: .interaction(type: .move, rawPosition: position))
+  }
+
+  /// Creates a pinch interaction event at the given world-space position.
+  ///
+  /// - Parameter position: The world-space position of the pinch gesture.
+  /// - Returns: A ``SpatialEvent`` with kind `.interaction(type: .pinch)`.
+  public static func pinch(at position: SIMD3<Float>) -> SpatialEvent {
+    SpatialEvent(kind: .interaction(type: .pinch, rawPosition: position))
+  }
+
+  /// Creates a drag interaction event at the given world-space position.
+  ///
+  /// - Parameter position: The world-space position of the drag gesture.
+  /// - Returns: A ``SpatialEvent`` with kind `.interaction(type: .drag)`.
+  public static func drag(at position: SIMD3<Float>) -> SpatialEvent {
+    SpatialEvent(kind: .interaction(type: .drag, rawPosition: position))
+  }
+}
