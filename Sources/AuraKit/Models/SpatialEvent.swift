@@ -152,6 +152,20 @@ public struct SpatialEvent: Identifiable, Sendable, Hashable, Codable {
     self.kind = kind
     self.score = score
   }
+
+  // MARK: - Immutable Copy
+
+  /// Returns a copy of this event with the given score applied.
+  ///
+  /// This is the primary mechanism for ``HeuristicRouter`` to assign scores
+  /// without mutating the original event. Preserves `id`, `timestamp`, and
+  /// `kind` — only the `score` field differs in the returned copy.
+  ///
+  /// - Parameter newScore: The heuristic score to apply.
+  /// - Returns: A new ``SpatialEvent`` identical to `self` except for `score`.
+  public func withScore(_ newScore: Double) -> SpatialEvent {
+    SpatialEvent(id: id, timestamp: timestamp, kind: kind, score: newScore)
+  }
 }
 
 // MARK: - Convenience factories (raw SIMD3<Float> → CodableSIMD3)

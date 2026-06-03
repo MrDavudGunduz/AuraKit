@@ -101,19 +101,13 @@ public actor CaptureActor {
   public func record(event: SpatialEvent) async {
     let decision = router.route(event, config: config)
 
-    // Single-pass: extract score, build the scored event, and route — no redundant branching.
+    // Single-pass: extract score, build the scored copy, and route — no redundant branching.
     switch decision {
     case .directStore(let score):
-      let scored = SpatialEvent(
-        id: event.id, timestamp: event.timestamp, kind: event.kind, score: score
-      )
-      await store.append(scored)
+      await store.append(event.withScore(score))
 
     case .enqueueBuffer(let score):
-      let scored = SpatialEvent(
-        id: event.id, timestamp: event.timestamp, kind: event.kind, score: score
-      )
-      await buffer.enqueue(scored)
+      await buffer.enqueue(event.withScore(score))
     }
   }
 
@@ -140,16 +134,10 @@ public actor CaptureActor {
 
       switch decision {
       case .directStore(let score):
-        let scored = SpatialEvent(
-          id: event.id, timestamp: event.timestamp, kind: event.kind, score: score
-        )
-        storeEvents.append(scored)
+        storeEvents.append(event.withScore(score))
 
       case .enqueueBuffer(let score):
-        let scored = SpatialEvent(
-          id: event.id, timestamp: event.timestamp, kind: event.kind, score: score
-        )
-        await buffer.enqueue(scored)
+        await buffer.enqueue(event.withScore(score))
       }
     }
 
