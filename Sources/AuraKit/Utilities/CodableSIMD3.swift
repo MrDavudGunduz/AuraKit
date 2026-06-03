@@ -49,3 +49,14 @@ extension CodableSIMD3 {
   /// boilerplate of wrapping `SIMD3<Float>(0, 0, 0)` at every call site.
   public static let zero = CodableSIMD3(SIMD3<Float>(0, 0, 0))
 }
+
+// MARK: - CustomStringConvertible
+
+extension CodableSIMD3: CustomStringConvertible {
+
+  /// A human-readable representation of the 3D position.
+  ///
+  /// Example output: `"(0.5, 1.2, -0.8)"`. Useful for debug logging
+  /// and `os.log` diagnostics without requiring manual field extraction.
+  public var description: String { "(\(x), \(y), \(z))" }
+}

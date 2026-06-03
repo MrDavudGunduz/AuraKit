@@ -102,11 +102,11 @@ public final class MemoryArchiveNode {
     // Encode [UUID] as JSON Data for SwiftData/CloudKit compatibility.
     // Defensive encoding: if this ever fails (extreme memory pressure),
     // the node is still created with empty source data rather than crashing.
-    if let encoded = try? JSONEncoder().encode(sourceNodeIDs) {
-      self.sourceNodeIDsData = encoded
-    } else {
+    do {
+      self.sourceNodeIDsData = try JSONEncoder().encode(sourceNodeIDs)
+    } catch {
       MemoryArchiveNodeLog.logger.error(
-        "[AuraKit] MemoryArchiveNode: Failed to encode sourceNodeIDs — defaulting to empty."
+        "[AuraKit] MemoryArchiveNode: Failed to encode sourceNodeIDs — \(error.localizedDescription). Defaulting to empty."
       )
       self.sourceNodeIDsData = Data()
     }
@@ -129,11 +129,11 @@ extension MemoryArchiveNode {
   ///
   /// - Parameter ids: The new array of source `RawMemoryNode` UUIDs.
   public func updateSourceNodeIDs(_ ids: [UUID]) {
-    if let encoded = try? JSONEncoder().encode(ids) {
-      self.sourceNodeIDsData = encoded
-    } else {
+    do {
+      self.sourceNodeIDsData = try JSONEncoder().encode(ids)
+    } catch {
       MemoryArchiveNodeLog.logger.error(
-        "[AuraKit] MemoryArchiveNode: Failed to encode updated sourceNodeIDs."
+        "[AuraKit] MemoryArchiveNode: Failed to encode updated sourceNodeIDs — \(error.localizedDescription)."
       )
     }
   }
