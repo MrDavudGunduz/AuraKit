@@ -86,4 +86,16 @@ extension SpatialEventStore {
       await append(event)
     }
   }
+
+  /// Default paginated fetch — slices the full `allEvents()` snapshot.
+  ///
+  /// Conforming types with large stores should override this method with
+  /// an optimised implementation that avoids loading the full dataset
+  /// (e.g., SwiftData `fetchLimit`/`fetchOffset`).
+  public func events(limit: Int, offset: Int = 0) async -> [SpatialEvent] {
+    let all = await allEvents()
+    guard limit > 0, offset >= 0, offset < all.count else { return [] }
+    let end = min(offset + limit, all.count)
+    return Array(all[offset..<end])
+  }
 }
