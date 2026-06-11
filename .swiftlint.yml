@@ -44,7 +44,6 @@ opt_in_rules:
   - no_magic_numbers
   - prefer_key_path
   - reduce_boolean
-  - single_line_comments
   - unavailable_function
   - vertical_whitespace_closing_braces
   - void_return
@@ -95,6 +94,8 @@ identifier_name:
   max_length:
     warning: 50
     error: 60
+  validates_start_with_lowercase:
+    severity: warning
   excluded:
     - id
     - x
@@ -102,6 +103,12 @@ identifier_name:
     - z
     - n
     - t
+    - _count
+    - _capture
+    - _previousKey
+    - _keyVersion
+    - _droppedEventCount
+    - _cachedSourceNodeIDs
 
 # ─── Custom Rules ──────────────────────────────────────────────────────────────
 custom_rules:

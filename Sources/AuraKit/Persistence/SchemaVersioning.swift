@@ -39,41 +39,46 @@ public enum AuraKitSchemaV1: VersionedSchema {
   }
 }
 
+// MARK: - Schema V2
+
+/// AuraKit Schema V2 — Key Version Tracking.
+///
+/// Adds ``RawMemoryNode/keyVersion`` to track which encryption key version
+/// was used for each node's payload. This enables partial key rotation
+/// migration — after ``KeyManager/rotateKey()``, nodes encrypted with the
+/// previous key can be identified and re-encrypted without a full-table scan.
+///
+/// This is a lightweight migration from V1 — the new field has a default
+/// value of `0`, so SwiftData can perform the migration automatically without
+/// custom data transformation logic.
+public enum AuraKitSchemaV2: VersionedSchema {
+
+  public static let versionIdentifier = Schema.Version(2, 0, 0)
+
+  public static var models: [any PersistentModel.Type] {
+    [RawMemoryNode.self, MemoryArchiveNode.self]
+  }
+}
+
 // MARK: - Migration Plan
 
 /// The master migration plan for AuraKit's SwiftData schema.
 ///
-/// Currently contains only V1 (no migrations needed). When V2 is introduced,
-/// add a lightweight or custom migration stage here.
+/// Contains the V1 → V2 lightweight migration (adding `keyVersion` to
+/// `RawMemoryNode`). When future schema changes are needed, add new
+/// `VersionedSchema` enums and corresponding migration stages.
 ///
-/// ## Example — Adding a V1 → V2 Lightweight Migration
-///
-/// ```swift
-/// static var stages: [MigrationStage] {
-///     [
-///         .lightweight(
-///             fromVersion: AuraKitSchemaV1.self,
-///             toVersion: AuraKitSchemaV2.self
-///         )
-///     ]
-/// }
-/// ```
-///
-/// ## Example — Adding a V1 → V2 Custom Migration
+/// ## Example — Adding a V2 → V3 Custom Migration
 ///
 /// ```swift
 /// static var stages: [MigrationStage] {
 ///     [
+///         .lightweight(fromVersion: AuraKitSchemaV1.self, toVersion: AuraKitSchemaV2.self),
 ///         .custom(
-///             fromVersion: AuraKitSchemaV1.self,
-///             toVersion: AuraKitSchemaV2.self,
-///             willMigrate: { context in
-///                 // Pre-migration logic
-///             },
-///             didMigrate: { context in
-///                 // Post-migration logic
-///                 try context.save()
-///             }
+///             fromVersion: AuraKitSchemaV2.self,
+///             toVersion: AuraKitSchemaV3.self,
+///             willMigrate: { context in },
+///             didMigrate: { context in try context.save() }
 ///         )
 ///     ]
 /// }
@@ -81,12 +86,19 @@ public enum AuraKitSchemaV1: VersionedSchema {
 public enum AuraKitMigrationPlan: SchemaMigrationPlan {
 
   public static var schemas: [any VersionedSchema.Type] {
-    [AuraKitSchemaV1.self]
+    [AuraKitSchemaV1.self, AuraKitSchemaV2.self]
   }
 
   public static var stages: [MigrationStage] {
-    // No migrations yet — V1 is the initial schema.
-    // Future migrations will be appended here in chronological order.
-    []
+    [
+      // V1 → V2: Adding keyVersion field to RawMemoryNode.
+      // Lightweight migration — the new field has a default value (0),
+      // so no custom data transformation is required.
+      .lightweight(
+        fromVersion: AuraKitSchemaV1.self,
+        toVersion: AuraKitSchemaV2.self
+      ),
+    ]
   }
 }
+

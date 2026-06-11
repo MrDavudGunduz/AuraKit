@@ -86,6 +86,58 @@ enum KeychainHelper {
     return status == errSecSuccess
   }
 
+  /// Throwing variant of ``store(data:service:account:accessGroup:)`` that
+  /// propagates the Security framework `OSStatus` via ``AuraError``.
+  ///
+  /// Use this in contexts where the Keychain write is critical and the caller
+  /// needs precise failure diagnostics (e.g., ``KeyManager`` key persistence).
+  ///
+  /// - Parameters:
+  ///   - data: The data to store.
+  ///   - service: The Keychain service identifier.
+  ///   - account: The Keychain account identifier.
+  ///   - accessGroup: Optional Keychain access group for App Extension sharing.
+  /// - Throws: ``AuraError/keychainOperationFailed(operation:status:)`` if
+  ///   `SecItemAdd` returns a non-success status.
+  static func storeOrThrow(
+    data: Data,
+    service: String,
+    account: String,
+    accessGroup: String? = nil
+  ) throws {
+    var deleteQuery: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: account,
+    ]
+    if let group = accessGroup {
+      deleteQuery[kSecAttrAccessGroup as String] = group
+    }
+    SecItemDelete(deleteQuery as CFDictionary)
+
+    var addQuery: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: account,
+      kSecValueData as String: data,
+      kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+      kSecAttrSynchronizable as String: false,
+    ]
+    if let group = accessGroup {
+      addQuery[kSecAttrAccessGroup as String] = group
+    }
+    let status = SecItemAdd(addQuery as CFDictionary, nil)
+    guard status == errSecSuccess else {
+      KeychainHelper.logger.error(
+        "[AuraKit] KeychainHelper: SecItemAdd failed — OSStatus \(status) for account '\(account)'."
+      )
+      throw AuraError.keychainOperationFailed(
+        operation: "store",
+        status: Int(status)
+      )
+    }
+  }
+
   // MARK: - Retrieve
 
   /// Retrieves data from the Keychain, or returns `nil` if no matching item exists.
@@ -144,5 +196,36 @@ enum KeychainHelper {
       query[kSecAttrAccessGroup as String] = group
     }
     return SecItemDelete(query as CFDictionary) == errSecSuccess
+  }
+
+  /// Throwing variant of ``delete(service:account:accessGroup:)`` that
+  /// propagates the Security framework `OSStatus` via ``AuraError``.
+  ///
+  /// - Parameters:
+  ///   - service: The Keychain service identifier.
+  ///   - account: The Keychain account identifier.
+  ///   - accessGroup: Optional Keychain access group for App Extension sharing.
+  /// - Throws: ``AuraError/keychainOperationFailed(operation:status:)`` if
+  ///   `SecItemDelete` returns a non-success status.
+  static func deleteOrThrow(
+    service: String,
+    account: String,
+    accessGroup: String? = nil
+  ) throws {
+    var query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: account,
+    ]
+    if let group = accessGroup {
+      query[kSecAttrAccessGroup as String] = group
+    }
+    let status = SecItemDelete(query as CFDictionary)
+    guard status == errSecSuccess else {
+      throw AuraError.keychainOperationFailed(
+        operation: "delete",
+        status: Int(status)
+      )
+    }
   }
 }

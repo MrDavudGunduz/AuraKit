@@ -189,6 +189,37 @@ public final class AuraKit {
   ///
   /// - Parameter config: The validated ``AuraConfiguration`` to apply.
   public func configure(with config: AuraConfiguration) {
+    configure(with: config, store: nil)
+  }
+
+  /// Configures the AuraKit pipeline with the provided settings and an optional
+  /// custom persistence store.
+  ///
+  /// This overload enables host applications to inject a production-grade
+  /// ``EncryptedMemoryStore`` (or any ``SpatialEventStore`` conforming type)
+  /// at configuration time:
+  ///
+  /// ```swift
+  /// let container = try PersistenceController.makeContainer()
+  /// let store = EncryptedMemoryStore(container: container)
+  /// AuraKit.shared.configure(with: config, store: store)
+  /// ```
+  ///
+  /// When `store` is `nil`, a default ``MemoryStore`` is created using
+  /// `config.storeCapacity` — matching the behaviour of ``configure(with:)``.
+  ///
+  /// - Important: Calling `configure` more than once without an
+  ///   intervening ``reset()`` is a programming error. See ``configure(with:)``
+  ///   for the full diagnostic behaviour.
+  ///
+  /// - Parameters:
+  ///   - config: The validated ``AuraConfiguration`` to apply.
+  ///   - store: An optional ``SpatialEventStore`` to use for persistence.
+  ///     Pass `nil` to use the default in-memory store.
+  public func configure(
+    with config: AuraConfiguration,
+    store: (any SpatialEventStore)?
+  ) {
     guard _capture == nil else {
       assertionFailure(
         "[AuraKit] configure(with:) called more than once. "
@@ -203,7 +234,7 @@ public final class AuraKit {
       )
       return
     }
-    _capture = CaptureActor(config: config)
+    _capture = CaptureActor(config: config, store: store)
   }
 
   /// Convenience throwing overload — constructs an ``AuraConfiguration`` from
@@ -273,6 +304,16 @@ public final class AuraKit {
   /// Equivalent to `AuraKit.shared.configure(with: config)`.
   public static func configure(with config: AuraConfiguration) {
     shared.configure(with: config)
+  }
+
+  /// Convenience static wrapper for ``configure(with:store:)``.
+  ///
+  /// Equivalent to `AuraKit.shared.configure(with: config, store: store)`.
+  public static func configure(
+    with config: AuraConfiguration,
+    store: (any SpatialEventStore)?
+  ) {
+    shared.configure(with: config, store: store)
   }
 
   /// Convenience static wrapper for the throwing ``configure(interactionWeight:gazeWeight:bufferCapacity:storeCapacity:)`` overload.

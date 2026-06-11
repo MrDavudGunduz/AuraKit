@@ -88,6 +88,17 @@ public final class RawMemoryNode {
   /// Incremented by ``EncryptedMemoryStore`` on each query hit.
   public var recalled: Int
 
+  /// The encryption key version used to encrypt this node's payload.
+  ///
+  /// Corresponds to ``KeyManager/keyVersion`` at the time of encryption.
+  /// Enables partial key rotation migration — after ``KeyManager/rotateKey()``,
+  /// nodes with `keyVersion < currentVersion` can be identified and re-encrypted
+  /// without a full-table scan.
+  ///
+  /// Defaults to `0` for backward compatibility with V1 schema records that
+  /// predate the key version tracking feature.
+  public var keyVersion: Int
+
   // MARK: - Init
 
   /// Creates a new `RawMemoryNode` with the given encrypted payload and metadata.
@@ -99,13 +110,15 @@ public final class RawMemoryNode {
   ///   - timestamp: Event timestamp.
   ///   - eventType: Flat classification for indexed queries.
   ///   - recalled: Initial recall count. Defaults to `0`.
+  ///   - keyVersion: The encryption key version. Defaults to `0`.
   public init(
     id: UUID = UUID(),
     encryptedPayload: Data,
     score: Double,
     timestamp: Date,
     eventType: SpatialEventType,
-    recalled: Int = 0
+    recalled: Int = 0,
+    keyVersion: Int = 0
   ) {
     self.id = id
     self.encryptedPayload = encryptedPayload
@@ -113,6 +126,7 @@ public final class RawMemoryNode {
     self.timestamp = timestamp
     self.eventType = eventType.rawValue
     self.recalled = recalled
+    self.keyVersion = keyVersion
   }
 }
 

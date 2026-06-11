@@ -80,6 +80,20 @@ public enum AuraError: Error, Sendable, Equatable {
   ///
   /// - Parameter reason: A diagnostic description of the rotation failure.
   case keyRotationFailed(reason: String)
+
+  // MARK: - Phase 2.2: Keychain Operations
+
+  /// A Keychain operation (store, delete, or retrieve) failed with a specific
+  /// Security framework error code.
+  ///
+  /// This provides richer diagnostic context than the legacy `Bool`-returning
+  /// `KeychainHelper` methods, enabling precise failure analysis in production
+  /// telemetry (e.g., `errSecDuplicateItem`, `errSecItemNotFound`).
+  ///
+  /// - Parameters:
+  ///   - operation: The Keychain operation that failed (e.g., `"store"`, `"delete"`).
+  ///   - status: The `OSStatus` code returned by the Security framework.
+  case keychainOperationFailed(operation: String, status: Int)
 }
 
 // MARK: - LocalizedError
@@ -103,6 +117,8 @@ extension AuraError: LocalizedError {
       return "[AuraKit] Persistence failed: \(reason)"
     case .keyRotationFailed(let reason):
       return "[AuraKit] Key rotation failed: \(reason)"
+    case .keychainOperationFailed(let operation, let status):
+      return "[AuraKit] Keychain \(operation) failed with OSStatus \(status)"
     }
   }
 }
@@ -125,6 +141,7 @@ extension AuraError: CustomNSError {
     case .secureEnclaveUnavailable: return 1_005
     case .persistenceFailed: return 1_006
     case .keyRotationFailed: return 1_007
+    case .keychainOperationFailed: return 1_008
     }
   }
 }
