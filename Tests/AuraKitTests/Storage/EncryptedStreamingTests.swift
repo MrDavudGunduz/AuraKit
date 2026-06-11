@@ -34,7 +34,8 @@ struct EncryptedStreamingTests {
     await store.batchAppend(events)
 
     var streamed: [SpatialEvent] = []
-    for await event in store.eventStream() {
+    let stream = await store.eventStream()
+    for await event in stream {
       streamed.append(event)
     }
 
@@ -67,7 +68,8 @@ struct EncryptedStreamingTests {
     await store.append(event2)
 
     var timestamps: [Date] = []
-    for await event in store.eventStream() {
+    let stream = await store.eventStream()
+    for await event in stream {
       timestamps.append(event.timestamp)
     }
 
@@ -81,7 +83,8 @@ struct EncryptedStreamingTests {
     let store = try makeStore()
 
     var count = 0
-    for await _ in store.eventStream() {
+    let stream = await store.eventStream()
+    for await _ in stream {
       count += 1
     }
 
@@ -98,7 +101,8 @@ struct EncryptedStreamingTests {
     await store.batchAppend(events)
 
     var streamed: [SpatialEvent] = []
-    for await event in store.eventStream(limit: 3) {
+    let stream = await store.eventStream(limit: 3)
+    for await event in stream {
       streamed.append(event)
     }
 
@@ -113,7 +117,8 @@ struct EncryptedStreamingTests {
     await store.batchAppend(events)
 
     var streamed: [SpatialEvent] = []
-    for await event in store.eventStream(limit: 3, offset: 5) {
+    let stream = await store.eventStream(limit: 3, offset: 5)
+    for await event in stream {
       streamed.append(event)
     }
 
@@ -136,7 +141,8 @@ struct EncryptedStreamingTests {
     let allEventsResult = await store.allEvents()
 
     var streamedIDs: [UUID] = []
-    for await event in store.eventStream() {
+    let stream = await store.eventStream()
+    for await event in stream {
       streamedIDs.append(event.id)
     }
 
@@ -153,7 +159,8 @@ struct EncryptedStreamingTests {
     await store.append(event)
 
     // Stream the event (should not increment recall)
-    for await _ in store.eventStream() {}
+    let stream = await store.eventStream()
+    for await _ in stream {}
 
     let recalled = await store.recalledCount(for: event.id)
     #expect(recalled == 0)
