@@ -54,7 +54,11 @@ public actor CaptureActor {
   // MARK: - Private Components
 
   /// L1 ring buffer for low-signal gaze events awaiting LLM processing.
-  private let buffer: RingBuffer<SpatialEvent>
+  ///
+  /// Stored as `var` because `RingBuffer` is a value type (`struct`) with
+  /// `mutating` methods. Actor isolation guarantees exclusive access — no
+  /// data races are possible despite the mutable binding.
+  private var buffer: RingBuffer<SpatialEvent>
 
   /// Stateless routing engine. Determines destination per event kind.
   private let router: HeuristicRouter
@@ -107,7 +111,7 @@ public actor CaptureActor {
       await store.append(event.withScore(score))
 
     case .enqueueBuffer(let score):
-      await buffer.enqueue(event.withScore(score))
+      buffer.enqueue(event.withScore(score))
     }
   }
 
@@ -116,7 +120,8 @@ public actor CaptureActor {
   /// Events are routed synchronously by the ``HeuristicRouter``, then:
   /// - **Interaction events** → collected and written via ``SpatialEventStore/batchAppend(_:)``
   ///   (single `save()` for all store-bound events)
-  /// - **Gaze events** → individually enqueued in the L1 ``RingBuffer``
+  /// - **Gaze events** → collected and written via ``RingBuffer/batchEnqueue(_:)``
+  ///   (single actor hop for all buffer-bound events)
   ///
   /// Use this for burst ingestion scenarios where multiple sensor frames are
   /// available simultaneously (e.g., ARKit batch updates, replay pipelines).
@@ -127,7 +132,9 @@ public actor CaptureActor {
     guard !events.isEmpty else { return }
 
     var storeEvents: [SpatialEvent] = []
+    var bufferEvents: [SpatialEvent] = []
     storeEvents.reserveCapacity(events.count)
+    bufferEvents.reserveCapacity(events.count)
 
     for event in events {
       let decision = router.route(event, config: config)
@@ -137,8 +144,13 @@ public actor CaptureActor {
         storeEvents.append(event.withScore(score))
 
       case .enqueueBuffer(let score):
-        await buffer.enqueue(event.withScore(score))
+        bufferEvents.append(event.withScore(score))
       }
+    }
+
+    // Batch-enqueue all buffer-bound events in a single synchronous pass
+    if !bufferEvents.isEmpty {
+      buffer.batchEnqueue(bufferEvents)
     }
 
     // Batch-insert all store-bound events in a single save
@@ -154,8 +166,8 @@ public actor CaptureActor {
   /// Survival Index scoring.
   ///
   /// - Returns: All buffered gaze events in FIFO order (oldest first).
-  public func flush() async -> [SpatialEvent] {
-    await buffer.drainAll()
+  public func flush() -> [SpatialEvent] {
+    buffer.drainAll()
   }
 
   /// The number of gaze events currently held in the L1 ring buffer.
@@ -163,7 +175,7 @@ public actor CaptureActor {
   /// Use this for observability and back-pressure monitoring. The value
   /// reflects the state at the time of the async read.
   public var bufferedEventCount: Int {
-    get async { await buffer.count }
+    buffer.count
   }
 
   /// A snapshot of all high-signal events in the persistent memory store.
