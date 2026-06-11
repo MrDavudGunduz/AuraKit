@@ -44,6 +44,14 @@ public actor EncryptedMemoryStore: SpatialEventStore {
 
   /// The SwiftData model context, created from the injected container.
   /// Owned exclusively by this actor — never shared across concurrency domains.
+  ///
+  /// ## Access Level
+  ///
+  /// Intentionally `internal` (not `private`) because `EncryptedMemoryStore` is
+  /// split across multiple extension files (`+Decryption`, `+Queries`, `+Streaming`)
+  /// for SwiftLint file-length compliance. All extension files execute within this
+  /// actor’s isolation domain, so the `ModelContext` never escapes its thread-safety
+  /// boundary. Host applications cannot access this property (`internal` ≠ `public`).
   let modelContext: ModelContext
 
   /// The key manager providing the Secure Enclave–derived symmetric key.
@@ -111,6 +119,7 @@ public actor EncryptedMemoryStore: SpatialEventStore {
   public func append(_ event: SpatialEvent) async {
     do {
       let key = try await keyManager.symmetricKey()
+      let currentKeyVersion = await keyManager.keyVersion
       let plaintext = try encoder.encode(event)
       let ciphertext = try encryptionService.encrypt(plaintext, using: key)
 
@@ -119,7 +128,8 @@ public actor EncryptedMemoryStore: SpatialEventStore {
         encryptedPayload: ciphertext,
         score: event.score,
         timestamp: event.timestamp,
-        eventType: event.kind.eventType
+        eventType: event.kind.eventType,
+        keyVersion: currentKeyVersion
       )
 
       modelContext.insert(node)
@@ -127,9 +137,13 @@ public actor EncryptedMemoryStore: SpatialEventStore {
       do {
         try modelContext.save()
       } catch {
+        // Rollback the unsaved insert to prevent dirty state accumulation.
+        // Without rollback, the failed node remains in the context and could
+        // cause duplicate writes or constraint violations on the next save.
+        modelContext.rollback()
         _droppedEventCount += 1
         Self.logger.error(
-          "[AuraKit] EncryptedMemoryStore: Failed to save context — \(error.localizedDescription)"
+          "[AuraKit] EncryptedMemoryStore: Failed to save context — \(error.localizedDescription). Context rolled back."
         )
       }
     } catch {
@@ -153,6 +167,7 @@ public actor EncryptedMemoryStore: SpatialEventStore {
 
     do {
       let key = try await keyManager.symmetricKey()
+      let currentKeyVersion = await keyManager.keyVersion
       var insertedCount = 0
 
       for event in events {
@@ -165,7 +180,8 @@ public actor EncryptedMemoryStore: SpatialEventStore {
             encryptedPayload: ciphertext,
             score: event.score,
             timestamp: event.timestamp,
-            eventType: event.kind.eventType
+            eventType: event.kind.eventType,
+            keyVersion: currentKeyVersion
           )
 
           modelContext.insert(node)
@@ -186,9 +202,11 @@ public actor EncryptedMemoryStore: SpatialEventStore {
           "[AuraKit] EncryptedMemoryStore: Batch persisted \(insertedCount) events in a single save."
         )
       } catch {
+        // Rollback all unsaved inserts to prevent partial dirty state.
+        modelContext.rollback()
         _droppedEventCount += insertedCount
         Self.logger.error(
-          "[AuraKit] EncryptedMemoryStore: Batch save failed — \(error.localizedDescription)"
+          "[AuraKit] EncryptedMemoryStore: Batch save failed — \(error.localizedDescription). Context rolled back."
         )
       }
     } catch {
@@ -341,8 +359,9 @@ public actor EncryptedMemoryStore: SpatialEventStore {
       return deletedCount
     } catch {
       Self.logger.error(
-        "[AuraKit] EncryptedMemoryStore: deleteNodes failed — \(error.localizedDescription)"
+        "[AuraKit] EncryptedMemoryStore: deleteNodes failed — \(error.localizedDescription). Context rolled back."
       )
+      modelContext.rollback()
       return 0
     }
   }
@@ -362,8 +381,9 @@ public actor EncryptedMemoryStore: SpatialEventStore {
       )
     } catch {
       Self.logger.error(
-        "[AuraKit] EncryptedMemoryStore: clear() failed — \(error.localizedDescription)"
+        "[AuraKit] EncryptedMemoryStore: clear() failed — \(error.localizedDescription). Context rolled back."
       )
+      modelContext.rollback()
     }
   }
 }

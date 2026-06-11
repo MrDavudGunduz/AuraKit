@@ -97,8 +97,12 @@ extension EncryptedMemoryStore {
     do {
       try modelContext.save()
     } catch {
+      // Rollback unsaved recall counter increments to prevent dirty state.
+      // The in-memory node objects will revert to their pre-recall values,
+      // ensuring consistency between the persisted store and runtime state.
+      modelContext.rollback()
       Self.logger.error(
-        "[AuraKit] EncryptedMemoryStore: Failed to persist recall counters — \(error.localizedDescription)"
+        "[AuraKit] EncryptedMemoryStore: Failed to persist recall counters — \(error.localizedDescription). Context rolled back."
       )
     }
   }
