@@ -80,6 +80,15 @@ public final class MemoryArchiveNode {
   /// encoding/decoding transparently.
   public var sourceNodeIDsData: Data
 
+  /// In-memory cache for the decoded source node IDs.
+  ///
+  /// Marked `@Transient` so SwiftData does not persist this field.
+  /// Invalidated by ``updateSourceNodeIDs(_:)`` and lazily populated by
+  /// ``decodedSourceNodeIDs``, eliminating redundant `JSONDecoder` allocations
+  /// on repeated access.
+  @Transient
+  private var _cachedSourceNodeIDs: [UUID]?
+
   // MARK: - Init
 
   /// Creates a new `MemoryArchiveNode` from an encrypted summary and source references.
@@ -119,16 +128,26 @@ extension MemoryArchiveNode {
 
   /// Decodes and returns the array of source ``RawMemoryNode`` UUIDs.
   ///
+  /// The result is lazily cached in memory to avoid redundant `JSONDecoder`
+  /// allocations on repeated access. The cache is invalidated when
+  /// ``updateSourceNodeIDs(_:)`` is called.
+  ///
   /// Returns an empty array if decoding fails (should not occur under normal
   /// operation — indicates data corruption).
   public var decodedSourceNodeIDs: [UUID] {
-    (try? JSONDecoder().decode([UUID].self, from: sourceNodeIDsData)) ?? []
+    if let cached = _cachedSourceNodeIDs {
+      return cached
+    }
+    let decoded = (try? JSONDecoder().decode([UUID].self, from: sourceNodeIDsData)) ?? []
+    _cachedSourceNodeIDs = decoded
+    return decoded
   }
 
-  /// Updates the stored source node IDs.
+  /// Updates the stored source node IDs and invalidates the decode cache.
   ///
   /// - Parameter ids: The new array of source `RawMemoryNode` UUIDs.
   public func updateSourceNodeIDs(_ ids: [UUID]) {
+    _cachedSourceNodeIDs = nil
     do {
       self.sourceNodeIDsData = try JSONEncoder().encode(ids)
     } catch {

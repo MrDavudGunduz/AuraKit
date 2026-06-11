@@ -65,8 +65,10 @@ extension KeyManager {
     )
     guard stored else {
       KeyManager.logger.fault(
-        "[AuraKit] KeyManager: Failed to persist HKDF salt in Keychain. "
-          + "Salt would not survive app relaunch, causing permanent data loss."
+        """
+        [AuraKit] KeyManager: Failed to persist HKDF salt in Keychain. \
+        Salt would not survive app relaunch, causing permanent data loss.
+        """
       )
       throw AuraError.keyRotationFailed(
         reason: "Failed to persist HKDF salt in Keychain. "

@@ -154,4 +154,49 @@ struct AuraKitSmokeTests {
     instance.reset()
     #expect(!instance.isConfigured)
   }
+
+  // MARK: - Store Injection
+
+  @Test("configure(with:store:) injects custom store into CaptureActor")
+  func testConfigureWithCustomStore() async throws {
+    let instance = AuraKit.shared
+    instance.reset()
+
+    let customStore = MemoryStore(capacity: 100)
+    let config = try AuraConfiguration()
+    instance.configure(with: config, store: customStore)
+
+    let capture = try instance.capture()
+    let event = SpatialEvent.touchFixture()
+    await capture.record(event: event)
+
+    // Event should be in the custom store
+    let storedCount = await customStore.count
+    #expect(storedCount == 1, "Custom store should contain the recorded event")
+
+    let events = await customStore.allEvents()
+    #expect(events.first?.id == event.id, "Stored event should match recorded event")
+
+    instance.reset()
+  }
+
+  @Test("Static configure(with:store:) convenience wrapper works")
+  func testStaticConfigureWithStore() async throws {
+    let instance = AuraKit.shared
+    instance.reset()
+
+    let customStore = MemoryStore(capacity: 50)
+    let config = try AuraConfiguration()
+    AuraKit.configure(with: config, store: customStore)
+
+    #expect(instance.isConfigured)
+
+    let capture = try AuraKit.capture()
+    await capture.record(event: .touchFixture())
+
+    let storedCount = await customStore.count
+    #expect(storedCount == 1)
+
+    instance.reset()
+  }
 }

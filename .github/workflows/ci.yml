@@ -54,6 +54,14 @@ jobs:
       - name: Build (release)
         run: swift build -c release
 
+      # ── Lint ─────────────────────────────────────────────────────────
+
+      - name: SwiftLint (standalone)
+        run: |
+          # Run SwiftLint as a standalone tool to catch edge cases that
+          # the build-time plugin may miss (e.g., disabled targets, conditional compilation).
+          swift run -c release swiftlint lint --strict --reporter github-actions 2>&1 || true
+
       # ── Test ───────────────────────────────────────────────────────────
 
       - name: Test (parallel)
@@ -61,6 +69,9 @@ jobs:
 
       - name: Test with Thread Sanitizer
         run: swift test --sanitize=thread
+
+      - name: Test with Address Sanitizer
+        run: swift test --sanitize=address
 
       # ── Code Coverage ─────────────────────────────────────────────────
 

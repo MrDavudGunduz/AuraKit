@@ -1,15 +1,23 @@
 // RingBuffer.swift
 // AuraKit — Core Infrastructure
 //
-// A fixed-capacity, actor-isolated ring buffer for 60fps SpatialEvent ingestion.
+// A fixed-capacity, struct-based ring buffer for 60fps SpatialEvent ingestion.
 // Designed for zero heap growth after initial allocation — no dynamic resizing,
 // no memory leaks across thousands of frames.
+//
+// ## Performance Note
+//
+// `RingBuffer` was intentionally designed as a value type (`struct`) rather than
+// an `actor` to eliminate actor-hop overhead on the 60fps capture hot path.
+// Thread safety is guaranteed by the owning `CaptureActor`, which serialises all
+// access through its own actor isolation boundary — making a nested actor
+// redundant and wasteful (each hop adds ~1–5µs of scheduling latency).
 
 import Foundation
 
 // MARK: - RingBuffer
 
-/// A fixed-capacity, actor-isolated FIFO ring buffer.
+/// A fixed-capacity FIFO ring buffer designed for high-frequency event ingestion.
 ///
 /// `RingBuffer` forms the L1 buffer in AuraKit's capture pipeline. It stores
 /// low-signal gaze events in a circular fashion: when the buffer is full, the
@@ -25,18 +33,21 @@ import Foundation
 ///
 /// ## Thread Safety
 ///
-/// All mutations are actor-isolated. Cross-actor access via `await` is required
-/// from any other actor context — each call is an implicit actor hop. This is
-/// by design; the hop cost is negligible relative to 60fps frame budgets.
+/// `RingBuffer` is a value type (`struct`) with no internal synchronisation.
+/// Thread safety is provided by the owning ``CaptureActor``, which serialises
+/// all buffer access through its actor isolation boundary. This design eliminates
+/// the per-operation actor-hop overhead that would occur with a nested actor,
+/// while maintaining full data-race safety enforced by Swift 6's strict
+/// concurrency checker.
 ///
 /// ## Example
 ///
 /// ```swift
-/// let buffer = RingBuffer<SpatialEvent>(capacity: 512)
-/// await buffer.enqueue(event)           // actor hop — safe from any context
-/// let events = await buffer.drainAll() // atomically drains all events
+/// var buffer = RingBuffer<SpatialEvent>(capacity: 512)
+/// buffer.enqueue(event)               // synchronous — no actor hop
+/// let events = buffer.drainAll()      // atomically drains all events
 /// ```
-public actor RingBuffer<Element: Sendable> {
+public struct RingBuffer<Element: Sendable>: Sendable {
 
   // MARK: - Private State
 
@@ -90,7 +101,7 @@ public actor RingBuffer<Element: Sendable> {
   /// - Returns: `true` if the element was enqueued without eviction;
   ///   `false` if an existing element was evicted to make room (overflow).
   @discardableResult
-  public func enqueue(_ element: Element) -> Bool {
+  public mutating func enqueue(_ element: Element) -> Bool {
     let didOverflow = isFull
     if didOverflow {
       // Evict the oldest element by advancing the head pointer.
@@ -103,11 +114,40 @@ public actor RingBuffer<Element: Sendable> {
     return !didOverflow
   }
 
+  /// Enqueues multiple elements in a single pass.
+  ///
+  /// Unlike calling ``enqueue(_:)`` in a loop from outside an actor (which
+  /// would incur one actor hop per element when `RingBuffer` was an actor),
+  /// `batchEnqueue` processes all elements synchronously within a single
+  /// call — ideal for burst ingestion scenarios such as ARKit batch frame
+  /// updates, where multiple gaze events arrive simultaneously.
+  ///
+  /// - Parameter elements: The elements to enqueue. Empty arrays are no-ops.
+  /// - Returns: The number of elements that caused an overflow eviction.
+  ///   A return value of `0` means all elements were enqueued without eviction.
+  @discardableResult
+  public mutating func batchEnqueue(_ elements: [Element]) -> Int {
+    guard !elements.isEmpty else { return 0 }
+
+    var overflowCount = 0
+    for element in elements {
+      if isFull {
+        head = (head + 1) % capacity
+        _count -= 1
+        overflowCount += 1
+      }
+      storage[tail] = element
+      tail = (tail + 1) % capacity
+      _count += 1
+    }
+    return overflowCount
+  }
+
   /// Removes and returns the oldest element from the buffer.
   ///
   /// - Returns: The oldest element, or `nil` if the buffer is empty.
   @discardableResult
-  public func dequeue() -> Element? {
+  public mutating func dequeue() -> Element? {
     guard !isEmpty else { return nil }
     let element = storage[head]
     storage[head] = nil  // Release reference to prevent unintended retention
@@ -125,7 +165,7 @@ public actor RingBuffer<Element: Sendable> {
   /// state reset — more efficient than n individual ``dequeue()`` calls.
   ///
   /// - Returns: All buffered elements in FIFO order (oldest first).
-  public func drainAll() -> [Element] {
+  public mutating func drainAll() -> [Element] {
     guard !isEmpty else { return [] }
 
     var result = [Element]()

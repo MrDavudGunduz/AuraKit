@@ -55,6 +55,13 @@ public protocol SpatialEventStore: Actor {
   /// Returns a snapshot of all stored events in chronological order.
   ///
   /// The returned array is a value-type copy — mutations do not affect the log.
+  ///
+  /// - Warning: For stores backed by encrypted persistent storage (e.g.,
+  ///   ``EncryptedMemoryStore``), this method performs a **full-table decrypt**
+  ///   which can cause significant memory pressure and latency with large
+  ///   datasets (1,000+ events). Prefer ``events(limit:offset:)`` for
+  ///   paginated access, or ``EncryptedMemoryStore/eventStream(limit:offset:)``
+  ///   for lazy, memory-efficient decryption.
   func allEvents() async -> [SpatialEvent]
 
   /// Returns a paginated slice of stored events in chronological order.

@@ -105,28 +105,28 @@ struct MemoryStoreStressTests {
 struct RingBufferStressTests {
 
   @Test("RingBuffer survives 50K enqueue/dequeue cycles without memory growth")
-  func ringBuffer50KCycles() async {
-    let buffer = RingBuffer<SpatialEvent>(capacity: 512)
+  func ringBuffer50KCycles() {
+    var buffer = RingBuffer<SpatialEvent>(capacity: 512)
 
     for _ in 0..<50_000 {
       let event = SpatialEvent(kind: .gaze(position: .zero), score: 0.3)
-      await buffer.enqueue(event)
+      buffer.enqueue(event)
     }
 
     // Buffer should be full at capacity, not 50K
-    let count = await buffer.count
+    let count = buffer.count
     #expect(count == 512)
 
     // Drain and verify all elements are valid
-    let drained = await buffer.drainAll()
+    let drained = buffer.drainAll()
     #expect(drained.count == 512)
-    #expect(await buffer.isEmpty)
+    #expect(buffer.isEmpty)
   }
 
   @Test("RingBuffer drainAll after overflow returns correct count")
-  func drainAfterOverflowCorrectness() async {
+  func drainAfterOverflowCorrectness() {
     let capacity = 128
-    let buffer = RingBuffer<SpatialEvent>(capacity: capacity)
+    var buffer = RingBuffer<SpatialEvent>(capacity: capacity)
 
     // Overflow the buffer 3x
     let totalEvents = capacity * 3
@@ -135,10 +135,10 @@ struct RingBufferStressTests {
         kind: .gaze(position: CodableSIMD3(x: Float(idx), y: 0, z: 0)),
         score: 0.3
       )
-      await buffer.enqueue(event)
+      buffer.enqueue(event)
     }
 
-    let drained = await buffer.drainAll()
+    let drained = buffer.drainAll()
     #expect(drained.count == capacity)
 
     // Verify oldest surviving event is from the last `capacity` writes

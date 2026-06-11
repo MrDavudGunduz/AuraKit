@@ -170,4 +170,50 @@ struct MemoryStoreTests {
     #expect(await store.count == 0)
     #expect(await store.allEvents().isEmpty)
   }
+
+  @Test("Unbounded mode supports pagination via events(limit:offset:)")
+  func testUnboundedModePagination() async {
+    let store = MemoryStore(capacity: 0)
+    let events = (0..<20).map { idx in
+      SpatialEvent(
+        kind: .interaction(type: .touch, position: CodableSIMD3(x: Float(idx), y: 0, z: 0)),
+        score: Double(idx) * 0.05
+      )
+    }
+    for event in events { await store.append(event) }
+
+    // Page 1: first 5 events
+    let page1 = await store.events(limit: 5, offset: 0)
+    #expect(page1.count == 5)
+    #expect(page1.first?.id == events[0].id)
+    #expect(page1.last?.id == events[4].id)
+
+    // Page 2: next 5 events
+    let page2 = await store.events(limit: 5, offset: 5)
+    #expect(page2.count == 5)
+    #expect(page2.first?.id == events[5].id)
+
+    // Last page: partial
+    let lastPage = await store.events(limit: 10, offset: 15)
+    #expect(lastPage.count == 5, "Last page should contain remaining 5 events")
+
+    // Out of range: offset beyond count
+    let empty = await store.events(limit: 5, offset: 100)
+    #expect(empty.isEmpty, "Offset beyond count should return empty")
+  }
+
+  @Test("Unbounded mode batchAppend works correctly")
+  func testUnboundedModeBatchAppend() async {
+    let store = MemoryStore(capacity: 0)
+    let events = (0..<100).map { _ in SpatialEvent.touchFixture() }
+
+    await store.batchAppend(events)
+
+    #expect(await store.count == 100)
+    let all = await store.allEvents()
+    for (original, stored) in zip(events, all) {
+      #expect(original.id == stored.id)
+    }
+  }
 }
+
