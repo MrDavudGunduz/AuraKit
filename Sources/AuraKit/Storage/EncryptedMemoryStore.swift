@@ -71,6 +71,13 @@ public actor EncryptedMemoryStore: SpatialEventStore {
   /// silent data loss.
   private var _droppedEventCount: Int = 0
 
+  /// Cumulative count of individual node decryption failures.
+  /// A non-zero value indicates corrupted or key-mismatched records.
+  private var _decryptionFailureCount: Int = 0
+
+  /// Cumulative count of events successfully written to the store.
+  private var _totalEventsWritten: Int = 0
+
   // MARK: - Init
 
   /// Creates an `EncryptedMemoryStore` connected to the given SwiftData container.
@@ -108,6 +115,20 @@ public actor EncryptedMemoryStore: SpatialEventStore {
   ///   lifetime. A non-zero value after a batch write indicates partial failure.
   public var droppedEventCount: Int { _droppedEventCount }
 
+  /// The cumulative count of individual node decryption failures.
+  ///
+  /// Incremented each time a ``RawMemoryNode`` fails to decrypt during
+  /// ``allEvents()``, ``events(limit:offset:)``, ``recallAndFetchAll()``,
+  /// or ``eventStream()``. A non-zero value may indicate corrupted records
+  /// or a key version mismatch requiring re-encryption migration.
+  public var decryptionFailureCount: Int { _decryptionFailureCount }
+
+  /// The cumulative count of events successfully written to the store.
+  ///
+  /// Combined with ``droppedEventCount``, this provides a write success rate:
+  /// `successRate = totalEventsWritten / (totalEventsWritten + droppedEventCount)`
+  public var totalEventsWritten: Int { _totalEventsWritten }
+
   // MARK: - SpatialEventStore Conformance
 
   /// Encrypts and persists a ``SpatialEvent`` as a ``RawMemoryNode``.
@@ -117,6 +138,9 @@ public actor EncryptedMemoryStore: SpatialEventStore {
   ///
   /// - Parameter event: The spatial event to persist.
   public func append(_ event: SpatialEvent) async {
+    let signpostID = SignpostLogger.beginEncrypt()
+    defer { SignpostLogger.endEncrypt(signpostID) }
+
     do {
       let key = try await keyManager.symmetricKey()
       let currentKeyVersion = await keyManager.keyVersion
@@ -136,6 +160,7 @@ public actor EncryptedMemoryStore: SpatialEventStore {
 
       do {
         try modelContext.save()
+        _totalEventsWritten += 1
       } catch {
         // Rollback the unsaved insert to prevent dirty state accumulation.
         // Without rollback, the failed node remains in the context and could
@@ -164,6 +189,9 @@ public actor EncryptedMemoryStore: SpatialEventStore {
   /// - Parameter events: The spatial events to persist.
   public func batchAppend(_ events: [SpatialEvent]) async {
     guard !events.isEmpty else { return }
+
+    let signpostID = SignpostLogger.beginBatchEncrypt(count: events.count)
+    defer { SignpostLogger.endBatchEncrypt(signpostID) }
 
     do {
       let key = try await keyManager.symmetricKey()
@@ -198,6 +226,7 @@ public actor EncryptedMemoryStore: SpatialEventStore {
 
       do {
         try modelContext.save()
+        _totalEventsWritten += insertedCount
         Self.logger.debug(
           "[AuraKit] EncryptedMemoryStore: Batch persisted \(insertedCount) events in a single save."
         )
@@ -385,5 +414,66 @@ public actor EncryptedMemoryStore: SpatialEventStore {
       )
       modelContext.rollback()
     }
+  }
+
+  // MARK: - Metrics
+
+  /// Atomically captures a snapshot of all observability counters.
+  ///
+  /// Use this to feed production telemetry dashboards (e.g., Firebase,
+  /// Datadog, or custom `os_log` reporters) without querying each counter
+  /// individually:
+  ///
+  /// ```swift
+  /// let snapshot = await store.metrics
+  /// analytics.track("aurakit.store", properties: [
+  ///     "written": snapshot.totalEventsWritten,
+  ///     "dropped": snapshot.droppedEventCount,
+  ///     "decryptFailures": snapshot.decryptionFailureCount
+  /// ])
+  /// ```
+  public var metrics: StoreMetrics {
+    StoreMetrics(
+      totalEventsWritten: _totalEventsWritten,
+      droppedEventCount: _droppedEventCount,
+      decryptionFailureCount: _decryptionFailureCount
+    )
+  }
+
+  /// Increments the decryption failure counter.
+  ///
+  /// Called by the ``EncryptedMemoryStore+Decryption`` extension when a
+  /// node fails to decrypt. Keeping the mutation here ensures the counter
+  /// is always modified within the actor's isolation domain.
+  func incrementDecryptionFailure() {
+    _decryptionFailureCount += 1
+  }
+}
+
+// MARK: - StoreMetrics
+
+/// An immutable, `Sendable` snapshot of ``EncryptedMemoryStore`` observability
+/// counters captured at a single point in time.
+///
+/// Designed for production telemetry — pass this across actor boundaries
+/// without holding a reference to the store itself.
+public struct StoreMetrics: Sendable, Equatable {
+
+  /// Total number of events successfully encrypted and persisted.
+  public let totalEventsWritten: Int
+
+  /// Total number of events that failed to persist (key, encryption, or save failure).
+  public let droppedEventCount: Int
+
+  /// Total number of individual node decryption failures.
+  public let decryptionFailureCount: Int
+
+  /// The write success rate as a percentage `[0.0, 100.0]`.
+  ///
+  /// Returns `100.0` when no events have been processed (no failures, no writes).
+  public var writeSuccessRate: Double {
+    let total = totalEventsWritten + droppedEventCount
+    guard total > 0 else { return 100.0 }
+    return (Double(totalEventsWritten) / Double(total)) * 100.0
   }
 }

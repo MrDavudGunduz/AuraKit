@@ -73,6 +73,7 @@ AuraKit follows a **Zero-Trust, Privacy-First** philosophy:
 - ``SpatialEventStore``
 - ``MemoryStore``
 - ``EncryptedMemoryStore``
+- ``StoreMetrics``
 
 ### Persistence
 
@@ -88,6 +89,11 @@ AuraKit follows a **Zero-Trust, Privacy-First** philosophy:
 
 - ``KeyManager``
 - ``EncryptionService``
+
+### Utilities
+
+- ``SignpostLogger``
+- ``CodableSIMD3``
 
 ### Errors
 

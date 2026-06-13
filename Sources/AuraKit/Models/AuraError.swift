@@ -2,7 +2,7 @@
 // AuraKit — Core Infrastructure
 //
 // Domain-specific error type for all AuraKit failure paths.
-// Phase 1: notConfigured, invalidConfiguration
+// Phase 1: notConfigured, invalidConfiguration, alreadyConfigured
 // Phase 2: encryptionFailed, decryptionFailed, secureEnclaveUnavailable, persistenceFailed
 // Phase 2.1: keyRotationFailed
 
@@ -35,6 +35,13 @@ public enum AuraError: Error, Sendable, Equatable {
   /// **Resolution:** Call `AuraKit.shared.configure(with:)` exactly once at app
   /// launch from a `@MainActor` context before accessing the capture pipeline.
   case notConfigured
+
+  /// ``AuraKit/configure(with:)`` was called while the pipeline is already configured.
+  ///
+  /// **Resolution:** Call ``AuraKit/reset()`` before reconfiguring, or guard with
+  /// ``AuraKit/isConfigured``. This error is thrown in both DEBUG and RELEASE builds
+  /// to prevent silent misconfiguration in production.
+  case alreadyConfigured
 
   /// The supplied ``AuraConfiguration`` contains one or more invalid values.
   ///
@@ -105,6 +112,9 @@ extension AuraError: LocalizedError {
     case .notConfigured:
       return "[AuraKit] Not configured. Call `AuraKit.shared.configure(with:)` "
         + "from a @MainActor context (e.g., .task modifier on your root Scene) at app launch."
+    case .alreadyConfigured:
+      return "[AuraKit] Already configured. Call `AuraKit.shared.reset()` "
+        + "before reconfiguring the pipeline."
     case .invalidConfiguration(let reason):
       return "[AuraKit] Invalid configuration: \(reason)"
     case .encryptionFailed(let reason):
@@ -135,6 +145,7 @@ extension AuraError: CustomNSError {
   public var errorCode: Int {
     switch self {
     case .notConfigured: return 1_001
+    case .alreadyConfigured: return 1_009
     case .invalidConfiguration: return 1_002
     case .encryptionFailed: return 1_003
     case .decryptionFailed: return 1_004

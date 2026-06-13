@@ -60,7 +60,7 @@ struct AuraKitSmokeTests {
     instance.reset()
 
     let config = try AuraConfiguration()
-    instance.configure(with: config)
+    try instance.configure(with: config)
     let captureActor = try instance.capture()
 
     // CaptureActor is a reference type (actor); capturing it should succeed
@@ -73,24 +73,39 @@ struct AuraKitSmokeTests {
 
   @Test("configure(with:) after reset() succeeds and returns a new CaptureActor")
   func testReconfigureAfterReset() throws {
-    // The double-configure guard (assertionFailure) is a debug-only programming-error
-    // contract that terminates the process — it cannot be unit-tested via Swift Testing.
-    // This test validates the documented reconfiguration flow: reset() then configure().
+    // Validates the documented reconfiguration flow: reset() then configure().
     let instance = AuraKit.shared
     instance.reset()
 
     let config1 = try AuraConfiguration(bufferCapacity: 64)
-    instance.configure(with: config1)
+    try instance.configure(with: config1)
     let first = try instance.capture()
 
     instance.reset()
 
     let config2 = try AuraConfiguration(bufferCapacity: 256)
-    instance.configure(with: config2)
+    try instance.configure(with: config2)
     let second = try instance.capture()
 
     // After reset + reconfigure, a new actor is vended
     #expect(first !== second)
+
+    instance.reset()  // Teardown
+  }
+
+  // MARK: - alreadyConfigured error
+
+  @Test("configure(with:) throws alreadyConfigured on double call without reset")
+  func testDoubleConfigureThrowsAlreadyConfigured() throws {
+    let instance = AuraKit.shared
+    instance.reset()
+
+    let config = try AuraConfiguration()
+    try instance.configure(with: config)
+
+    #expect(throws: AuraError.alreadyConfigured) {
+      try instance.configure(with: config)
+    }
 
     instance.reset()  // Teardown
   }
@@ -111,7 +126,7 @@ struct AuraKitSmokeTests {
   func testResetClearsConfiguration() throws {
     let instance = AuraKit.shared
     let config = try AuraConfiguration()
-    instance.configure(with: config)
+    try instance.configure(with: config)
     _ = try instance.capture()  // Should succeed
 
     instance.reset()
@@ -136,7 +151,7 @@ struct AuraKitSmokeTests {
     instance.reset()
 
     let config = try AuraConfiguration()
-    instance.configure(with: config)
+    try instance.configure(with: config)
     #expect(instance.isConfigured)
 
     instance.reset()  // Teardown
@@ -148,7 +163,7 @@ struct AuraKitSmokeTests {
     instance.reset()
 
     let config = try AuraConfiguration()
-    instance.configure(with: config)
+    try instance.configure(with: config)
     #expect(instance.isConfigured)
 
     instance.reset()
@@ -164,7 +179,7 @@ struct AuraKitSmokeTests {
 
     let customStore = MemoryStore(capacity: 100)
     let config = try AuraConfiguration()
-    instance.configure(with: config, store: customStore)
+    try instance.configure(with: config, store: customStore)
 
     let capture = try instance.capture()
     let event = SpatialEvent.touchFixture()
@@ -187,7 +202,7 @@ struct AuraKitSmokeTests {
 
     let customStore = MemoryStore(capacity: 50)
     let config = try AuraConfiguration()
-    AuraKit.configure(with: config, store: customStore)
+    try AuraKit.configure(with: config, store: customStore)
 
     #expect(instance.isConfigured)
 

@@ -29,6 +29,9 @@ extension EncryptedMemoryStore {
     _ nodes: [RawMemoryNode],
     using key: SymmetricKey
   ) -> [SpatialEvent] {
+    let signpostID = SignpostLogger.beginDecrypt(count: nodes.count)
+    defer { SignpostLogger.endDecrypt(signpostID) }
+
     var events: [SpatialEvent] = []
     events.reserveCapacity(nodes.count)
 
@@ -38,6 +41,7 @@ extension EncryptedMemoryStore {
         let event = try decoder.decode(SpatialEvent.self, from: plaintext)
         events.append(event)
       } catch {
+        incrementDecryptionFailure()
         Self.logger.error(
           "[AuraKit] EncryptedMemoryStore: Failed to decrypt node \(node.id) — \(error.localizedDescription)"
         )
@@ -65,6 +69,9 @@ extension EncryptedMemoryStore {
     _ nodes: [RawMemoryNode],
     using key: SymmetricKey
   ) -> [SpatialEvent] {
+    let signpostID = SignpostLogger.beginDecrypt(count: nodes.count)
+    defer { SignpostLogger.endDecrypt(signpostID) }
+
     var events: [SpatialEvent] = []
     events.reserveCapacity(nodes.count)
 
@@ -77,6 +84,7 @@ extension EncryptedMemoryStore {
         // Increment recall counter for Survival Index: SI(t) = S₀ · Rⁿ · e^(-λt)
         node.recalled += 1
       } catch {
+        incrementDecryptionFailure()
         Self.logger.error(
           "[AuraKit] EncryptedMemoryStore: Failed to decrypt node \(node.id) — \(error.localizedDescription)"
         )

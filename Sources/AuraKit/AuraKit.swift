@@ -181,15 +181,14 @@ public final class AuraKit {
   /// using the supplied ``AuraConfiguration``.
   ///
   /// - Important: Calling `configure(with:)` more than once without an
-  ///   intervening ``reset()`` is a programming error. In DEBUG builds an
-  ///   `assertionFailure` is raised (visible in Xcode) and a fault is logged to
-  ///   the `com.aurakit.framework` subsystem. In RELEASE builds the second call is
-  ///   silently ignored — the existing configuration is preserved.
-  ///   Call ``reset()`` explicitly first if reconfiguration is intentional (e.g., in tests).
+  ///   intervening ``reset()`` throws ``AuraError/alreadyConfigured``.
+  ///   Call ``reset()`` explicitly first if reconfiguration is intentional
+  ///   (e.g., in tests).
   ///
   /// - Parameter config: The validated ``AuraConfiguration`` to apply.
-  public func configure(with config: AuraConfiguration) {
-    configure(with: config, store: nil)
+  /// - Throws: ``AuraError/alreadyConfigured`` if the pipeline is already active.
+  public func configure(with config: AuraConfiguration) throws {
+    try configure(with: config, store: nil)
   }
 
   /// Configures the AuraKit pipeline with the provided settings and an optional
@@ -202,37 +201,32 @@ public final class AuraKit {
   /// ```swift
   /// let container = try PersistenceController.makeContainer()
   /// let store = EncryptedMemoryStore(container: container)
-  /// AuraKit.shared.configure(with: config, store: store)
+  /// try AuraKit.shared.configure(with: config, store: store)
   /// ```
   ///
   /// When `store` is `nil`, a default ``MemoryStore`` is created using
   /// `config.storeCapacity` — matching the behaviour of ``configure(with:)``.
   ///
   /// - Important: Calling `configure` more than once without an
-  ///   intervening ``reset()`` is a programming error. See ``configure(with:)``
-  ///   for the full diagnostic behaviour.
+  ///   intervening ``reset()`` throws ``AuraError/alreadyConfigured``.
   ///
   /// - Parameters:
   ///   - config: The validated ``AuraConfiguration`` to apply.
   ///   - store: An optional ``SpatialEventStore`` to use for persistence.
   ///     Pass `nil` to use the default in-memory store.
+  /// - Throws: ``AuraError/alreadyConfigured`` if the pipeline is already active.
   public func configure(
     with config: AuraConfiguration,
     store: (any SpatialEventStore)?
-  ) {
+  ) throws {
     guard _capture == nil else {
-      assertionFailure(
-        "[AuraKit] configure(with:) called more than once. "
-          + "Call AuraKit.shared.reset() before reconfiguring."
-      )
       AuraKit.logger.fault(
         """
         [AuraKit] configure(with:) called more than once. \
-        Call AuraKit.shared.reset() before reconfiguring. \
-        This call has been ignored.
+        Call AuraKit.shared.reset() before reconfiguring.
         """
       )
-      return
+      throw AuraError.alreadyConfigured
     }
     _capture = CaptureActor(config: config, store: store)
   }
@@ -248,7 +242,8 @@ public final class AuraKit {
   ///   - gazeWeight: Score for gaze events. Default `0.3`.
   ///   - bufferCapacity: L1 ring buffer capacity. Default `512`.
   ///   - storeCapacity: Max events in persistent memory. Default `10_000`.
-  /// - Throws: ``AuraError/invalidConfiguration(reason:)`` if any parameter is out of range.
+  /// - Throws: ``AuraError/invalidConfiguration(reason:)`` if any parameter is out of range,
+  ///   or ``AuraError/alreadyConfigured`` if the pipeline is already active.
   public func configure(
     interactionWeight: Double = AuraConfiguration.defaultInteractionWeight,
     gazeWeight: Double = AuraConfiguration.defaultGazeWeight,
@@ -261,7 +256,7 @@ public final class AuraKit {
       bufferCapacity: bufferCapacity,
       storeCapacity: storeCapacity
     )
-    configure(with: config)
+    try configure(with: config)
   }
 
   /// The active ``CaptureActor`` for recording spatial events.
@@ -301,24 +296,27 @@ public final class AuraKit {
 
   /// Convenience static wrapper for ``configure(with:)``.
   ///
-  /// Equivalent to `AuraKit.shared.configure(with: config)`.
-  public static func configure(with config: AuraConfiguration) {
-    shared.configure(with: config)
+  /// Equivalent to `try AuraKit.shared.configure(with: config)`.
+  /// - Throws: ``AuraError/alreadyConfigured`` if the pipeline is already active.
+  public static func configure(with config: AuraConfiguration) throws {
+    try shared.configure(with: config)
   }
 
   /// Convenience static wrapper for ``configure(with:store:)``.
   ///
-  /// Equivalent to `AuraKit.shared.configure(with: config, store: store)`.
+  /// Equivalent to `try AuraKit.shared.configure(with: config, store: store)`.
+  /// - Throws: ``AuraError/alreadyConfigured`` if the pipeline is already active.
   public static func configure(
     with config: AuraConfiguration,
     store: (any SpatialEventStore)?
-  ) {
-    shared.configure(with: config, store: store)
+  ) throws {
+    try shared.configure(with: config, store: store)
   }
 
   /// Convenience static wrapper for the throwing ``configure(interactionWeight:gazeWeight:bufferCapacity:storeCapacity:)`` overload.
   ///
-  /// - Throws: ``AuraError/invalidConfiguration(reason:)`` if any parameter is out of range.
+  /// - Throws: ``AuraError/invalidConfiguration(reason:)`` if any parameter is out of range,
+  ///   or ``AuraError/alreadyConfigured`` if the pipeline is already active.
   public static func configure(
     interactionWeight: Double = AuraConfiguration.defaultInteractionWeight,
     gazeWeight: Double = AuraConfiguration.defaultGazeWeight,
