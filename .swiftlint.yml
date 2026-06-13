@@ -108,7 +108,8 @@ identifier_name:
     - _previousKey
     - _keyVersion
     - _droppedEventCount
-    - _cachedSourceNodeIDs
+    - _decryptionFailureCount
+    - _totalEventsWritten
 
 # ─── Custom Rules ──────────────────────────────────────────────────────────────
 custom_rules:
