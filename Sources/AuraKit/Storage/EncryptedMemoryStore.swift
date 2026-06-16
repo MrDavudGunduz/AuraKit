@@ -36,7 +36,7 @@ public actor EncryptedMemoryStore: SpatialEventStore {
   // MARK: - Internal Logger
 
   static let logger = Logger(
-    subsystem: "com.aurakit.framework",
+    subsystem: AuraKitConstants.subsystem,
     category: "EncryptedMemoryStore"
   )
 
@@ -60,6 +60,10 @@ public actor EncryptedMemoryStore: SpatialEventStore {
   /// Stateless encryption/decryption service.
   let encryptionService: EncryptionService
 
+  /// Node count threshold at which ``allEvents()`` and ``recallAndFetchAll()``
+  /// emit a runtime `Logger.warning`. Set to `0` to disable.
+  let largeDatasetWarningThreshold: Int
+
   /// JSON encoder used to serialise `SpatialEvent` before encryption.
   let encoder = JSONEncoder()
 
@@ -69,14 +73,45 @@ public actor EncryptedMemoryStore: SpatialEventStore {
   /// Cumulative count of events that failed to persist due to key, encryption,
   /// or save errors. Monitor this value in production telemetry to detect
   /// silent data loss.
-  private var _droppedEventCount: Int = 0
+  ///
+  /// - Note: Access level is `internal` (not `private`) to enable the
+  ///   `EncryptedMemoryStore+Queries` extension to expose these via
+  ///   ``StoreMetrics`` without requiring all metrics code in the main file.
+  ///   Actor isolation guarantees exclusive access — no data races are possible.
+  var _droppedEventCount: Int = 0
 
   /// Cumulative count of individual node decryption failures.
   /// A non-zero value indicates corrupted or key-mismatched records.
-  private var _decryptionFailureCount: Int = 0
+  var _decryptionFailureCount: Int = 0
 
   /// Cumulative count of events successfully written to the store.
-  private var _totalEventsWritten: Int = 0
+  var _totalEventsWritten: Int = 0
+
+  /// Continuation for the dropped event notification stream.
+  /// Retained for the lifetime of the actor; yields a ``DroppedEvent``
+  /// each time an event fails to persist.
+  private let _dropContinuation: AsyncStream<DroppedEvent>.Continuation
+
+  /// An `AsyncStream` that emits a ``DroppedEvent`` each time an event fails
+  /// to persist due to key retrieval, encryption, or save failure.
+  ///
+  /// Subscribe to this stream in production to feed telemetry dashboards
+  /// with real-time drop diagnostics:
+  ///
+  /// ```swift
+  /// Task {
+  ///     for await drop in store.droppedEventStream {
+  ///         logger.error("Event \(drop.eventID?.uuidString ?? "batch") dropped: \(drop.reason)")
+  ///     }
+  /// }
+  /// ```
+  ///
+  /// The stream is infinite — it never finishes on its own. It yields events
+  /// only when drops occur; idle periods produce no output.
+  ///
+  /// - Note: The stream uses a buffer policy of `.bufferingNewest(64)` to prevent
+  ///   unbounded memory growth if the consumer falls behind.
+  public let droppedEventStream: AsyncStream<DroppedEvent>
 
   // MARK: - Init
 
@@ -90,10 +125,13 @@ public actor EncryptedMemoryStore: SpatialEventStore {
   ///     Defaults to a new instance if not provided.
   ///   - encryptionService: The ``EncryptionService`` for AES-GCM operations.
   ///     Defaults to a new instance.
+  ///   - largeDatasetWarningThreshold: Node count at which ``allEvents()``
+  ///     emits a runtime warning. Pass `0` to disable. Defaults to `1_000`.
   public init(
     container: ModelContainer,
     keyManager: KeyManager = KeyManager(),
-    encryptionService: EncryptionService = EncryptionService()
+    encryptionService: EncryptionService = EncryptionService(),
+    largeDatasetWarningThreshold: Int = AuraConfiguration.defaultLargeDatasetWarningThreshold
   ) {
     self.modelContext = ModelContext(container)
     // Explicit save() calls control write timing — disable autosave
@@ -101,6 +139,14 @@ public actor EncryptedMemoryStore: SpatialEventStore {
     self.modelContext.autosaveEnabled = false
     self.keyManager = keyManager
     self.encryptionService = encryptionService
+    self.largeDatasetWarningThreshold = largeDatasetWarningThreshold
+
+    // Set up the dropped event notification stream.
+    var continuation: AsyncStream<DroppedEvent>.Continuation!
+    self.droppedEventStream = AsyncStream(bufferingPolicy: .bufferingNewest(64)) {
+      continuation = $0
+    }
+    self._dropContinuation = continuation
   }
 
   // MARK: - Observability
@@ -167,12 +213,20 @@ public actor EncryptedMemoryStore: SpatialEventStore {
         // cause duplicate writes or constraint violations on the next save.
         modelContext.rollback()
         _droppedEventCount += 1
+        _dropContinuation.yield(DroppedEvent(
+          eventID: event.id,
+          reason: "Context save failed: \(error.localizedDescription)"
+        ))
         Self.logger.error(
           "[AuraKit] EncryptedMemoryStore: Failed to save context — \(error.localizedDescription). Context rolled back."
         )
       }
     } catch {
       _droppedEventCount += 1
+      _dropContinuation.yield(DroppedEvent(
+        eventID: event.id,
+        reason: "Encryption failed: \(error.localizedDescription)"
+      ))
       Self.logger.error(
         "[AuraKit] EncryptedMemoryStore: Encryption failed for event \(event.id) — \(error.localizedDescription)"
       )
@@ -216,6 +270,10 @@ public actor EncryptedMemoryStore: SpatialEventStore {
           insertedCount += 1
         } catch {
           _droppedEventCount += 1
+          _dropContinuation.yield(DroppedEvent(
+            eventID: event.id,
+            reason: "Batch encryption failed: \(error.localizedDescription)"
+          ))
           Self.logger.error(
             "[AuraKit] EncryptedMemoryStore: Encryption failed for event \(event.id) — \(error.localizedDescription)"
           )
@@ -234,12 +292,18 @@ public actor EncryptedMemoryStore: SpatialEventStore {
         // Rollback all unsaved inserts to prevent partial dirty state.
         modelContext.rollback()
         _droppedEventCount += insertedCount
+        _dropContinuation.yield(DroppedEvent(
+          reason: "Batch save failed (\(insertedCount) events): \(error.localizedDescription)"
+        ))
         Self.logger.error(
           "[AuraKit] EncryptedMemoryStore: Batch save failed — \(error.localizedDescription). Context rolled back."
         )
       }
     } catch {
       _droppedEventCount += events.count
+      _dropContinuation.yield(DroppedEvent(
+        reason: "Key retrieval failed during batch (\(events.count) events): \(error.localizedDescription)"
+      ))
       Self.logger.error(
         "[AuraKit] EncryptedMemoryStore: Key retrieval failed during batch — \(error.localizedDescription)"
       )
@@ -249,15 +313,32 @@ public actor EncryptedMemoryStore: SpatialEventStore {
   /// Fetches all stored events, decrypting each payload. **Pure read** — no
   /// state is modified. Use ``recallAndFetchAll()`` to also increment recall
   /// counters. Events returned chronologically; failed decryptions are skipped.
+  ///
+  /// - Warning: This method performs a **full-table decrypt**. For stores with
+  ///   1,000+ events, prefer ``events(limit:offset:)`` or ``eventStream()``
+  ///   to avoid memory pressure spikes.
   public func allEvents() async -> [SpatialEvent] {
     do {
       let key = try await keyManager.symmetricKey()
-
       let descriptor = FetchDescriptor<RawMemoryNode>(
         sortBy: [SortDescriptor(\.timestamp, order: .forward)]
       )
-
       let nodes = try modelContext.fetch(descriptor)
+
+      // Runtime OOM protection: warn developers when full-table decrypt
+      // is called on a large dataset. The warning recommends paginated or
+      // streaming alternatives that maintain constant peak memory.
+      if largeDatasetWarningThreshold > 0, nodes.count > largeDatasetWarningThreshold {
+        Self.logger.warning(
+          """
+          [AuraKit] EncryptedMemoryStore: allEvents() is decrypting \
+          \(nodes.count) nodes (threshold: \(self.largeDatasetWarningThreshold)). \
+          Consider using events(limit:offset:) or eventStream() to avoid \
+          memory pressure spikes from full-table decryption.
+          """
+        )
+      }
+
       return decryptNodes(nodes, using: key)
     } catch {
       Self.logger.error(
@@ -320,6 +401,18 @@ public actor EncryptedMemoryStore: SpatialEventStore {
       )
 
       let nodes = try modelContext.fetch(descriptor)
+
+      // Same large-dataset warning as allEvents().
+      if largeDatasetWarningThreshold > 0, nodes.count > largeDatasetWarningThreshold {
+        Self.logger.warning(
+          """
+          [AuraKit] EncryptedMemoryStore: recallAndFetchAll() is decrypting \
+          \(nodes.count) nodes (threshold: \(self.largeDatasetWarningThreshold)). \
+          Consider using recallAndFetch(limit:offset:) for large datasets.
+          """
+        )
+      }
+
       let events = decryptAndRecall(nodes, using: key)
       persistRecallCounters(eventCount: events.count)
       return events
@@ -354,99 +447,6 @@ public actor EncryptedMemoryStore: SpatialEventStore {
       )
       return []
     }
-  }
-
-  // MARK: - Pruning
-
-  /// Deletes all nodes with a score below the given threshold.
-  ///
-  /// Used by Phase 3's Survival Index pruning. Only the metadata score
-  /// is evaluated — no decryption occurs.
-  ///
-  /// - Parameter threshold: Nodes with `score < threshold` are deleted.
-  /// - Returns: The number of nodes deleted.
-  @discardableResult
-  public func deleteNodes(belowScore threshold: Double) async -> Int {
-    do {
-      let descriptor = FetchDescriptor<RawMemoryNode>(
-        predicate: #Predicate<RawMemoryNode> { $0.score < threshold }
-      )
-
-      let nodes = try modelContext.fetch(descriptor)
-      let deletedCount = nodes.count
-
-      for node in nodes {
-        modelContext.delete(node)
-      }
-
-      try modelContext.save()
-
-      Self.logger.info(
-        "[AuraKit] EncryptedMemoryStore: Pruned \(deletedCount) nodes below threshold \(threshold)."
-      )
-
-      return deletedCount
-    } catch {
-      Self.logger.error(
-        "[AuraKit] EncryptedMemoryStore: deleteNodes failed — \(error.localizedDescription). Context rolled back."
-      )
-      modelContext.rollback()
-      return 0
-    }
-  }
-
-  /// Removes all memory nodes from the store.
-  ///
-  /// - Warning: This is a destructive, irreversible operation.
-  ///   Primarily intended for test teardown and development resets.
-  public func clear() async {
-    do {
-      try modelContext.delete(model: RawMemoryNode.self)
-      try modelContext.delete(model: MemoryArchiveNode.self)
-      try modelContext.save()
-
-      Self.logger.info(
-        "[AuraKit] EncryptedMemoryStore: All nodes cleared."
-      )
-    } catch {
-      Self.logger.error(
-        "[AuraKit] EncryptedMemoryStore: clear() failed — \(error.localizedDescription). Context rolled back."
-      )
-      modelContext.rollback()
-    }
-  }
-
-  // MARK: - Metrics
-
-  /// Atomically captures a snapshot of all observability counters.
-  ///
-  /// Use this to feed production telemetry dashboards (e.g., Firebase,
-  /// Datadog, or custom `os_log` reporters) without querying each counter
-  /// individually:
-  ///
-  /// ```swift
-  /// let snapshot = await store.metrics
-  /// analytics.track("aurakit.store", properties: [
-  ///     "written": snapshot.totalEventsWritten,
-  ///     "dropped": snapshot.droppedEventCount,
-  ///     "decryptFailures": snapshot.decryptionFailureCount
-  /// ])
-  /// ```
-  public var metrics: StoreMetrics {
-    StoreMetrics(
-      totalEventsWritten: _totalEventsWritten,
-      droppedEventCount: _droppedEventCount,
-      decryptionFailureCount: _decryptionFailureCount
-    )
-  }
-
-  /// Increments the decryption failure counter.
-  ///
-  /// Called by the ``EncryptedMemoryStore+Decryption`` extension when a
-  /// node fails to decrypt. Keeping the mutation here ensures the counter
-  /// is always modified within the actor's isolation domain.
-  func incrementDecryptionFailure() {
-    _decryptionFailureCount += 1
   }
 }
 

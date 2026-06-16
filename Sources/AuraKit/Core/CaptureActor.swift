@@ -191,4 +191,25 @@ public actor CaptureActor {
   public var persistedEventCount: Int {
     get async { await store.count }
   }
+
+  // MARK: - Lifecycle
+
+  /// Drains all L1 ring buffer events and writes them to the persistent store.
+  ///
+  /// Unlike ``flush()``, which returns events for external processing,
+  /// `flushToStore()` writes all buffered gaze events directly to the
+  /// backing ``SpatialEventStore`` — ensuring no data loss during
+  /// pipeline teardown or graceful shutdown.
+  ///
+  /// Events are written as a single batch via ``SpatialEventStore/batchAppend(_:)``,
+  /// minimising I/O operations.
+  ///
+  /// - Returns: The number of events flushed to the store.
+  @discardableResult
+  public func flushToStore() async -> Int {
+    let events = buffer.drainAll()
+    guard !events.isEmpty else { return 0 }
+    await store.batchAppend(events)
+    return events.count
+  }
 }

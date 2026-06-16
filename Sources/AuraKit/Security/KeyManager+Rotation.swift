@@ -54,6 +54,7 @@ extension KeyManager {
       let newKey = try deriveKeyWithSalt(newSalt)
       cachedKey = newKey
       _keyVersion += 1
+      persistKeyVersion()
 
       KeyManager.logger.info(
         "[AuraKit] KeyManager: Key rotated successfully. Version: \(self._keyVersion)."

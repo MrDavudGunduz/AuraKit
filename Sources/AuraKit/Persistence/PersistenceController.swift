@@ -42,7 +42,7 @@ public struct PersistenceController: Sendable {
   // MARK: - Internal Logger
 
   private static let logger = Logger(
-    subsystem: "com.aurakit.framework",
+    subsystem: AuraKitConstants.subsystem,
     category: "PersistenceController"
   )
 

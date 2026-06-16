@@ -17,12 +17,6 @@ import SwiftData
 
 extension EncryptedMemoryStore {
 
-  /// Default number of nodes fetched per batch during streaming.
-  ///
-  /// Empirically tuned: 100 nodes × ~2 KB average ciphertext ≈ 200 KB peak
-  /// per batch — well within comfortable memory budgets on all Apple platforms.
-  private static let defaultStreamBatchSize: Int = 100
-
   /// Returns an `AsyncStream` that lazily decrypts and yields events one at a time.
   ///
   /// Unlike ``allEvents()`` which decrypts the entire store into an `[SpatialEvent]`
@@ -69,7 +63,7 @@ extension EncryptedMemoryStore {
   public func eventStream(
     limit: Int? = nil,
     offset: Int = 0,
-    batchSize: Int = defaultStreamBatchSize
+    batchSize: Int = AuraConfiguration.defaultStreamBatchSize
   ) async -> AsyncStream<SpatialEvent> {
     // Resolve the key once before entering the stream — avoids repeated
     // async key lookups per batch.
@@ -86,6 +80,20 @@ extension EncryptedMemoryStore {
     }
 
     // Capture immutable references for the stream closure.
+    //
+    // ## Actor Isolation Safety
+    //
+    // `modelContext` is captured by reference here, but this is safe because:
+    // 1. `eventStream()` is an actor-isolated method — the closure runs within
+    //    the actor's serialised execution context.
+    // 2. The `AsyncStream` build closure executes **synchronously** during stream
+    //    construction (not deferred to a consumer task). The while-loop runs to
+    //    completion, yielding all events, before the method returns.
+    // 3. The `ModelContext` never escapes the actor's isolation boundary —
+    //    consumers receive only `Sendable` `SpatialEvent` values via `yield`.
+    //
+    // If this method is ever refactored to use `AsyncSequence` with deferred
+    // execution, the `modelContext` capture must be re-evaluated for isolation.
     let service = encryptionService
     let jsonDecoder = decoder
     let context = modelContext

@@ -59,9 +59,12 @@ public protocol SpatialEventStore: Actor {
   /// - Warning: For stores backed by encrypted persistent storage (e.g.,
   ///   ``EncryptedMemoryStore``), this method performs a **full-table decrypt**
   ///   which can cause significant memory pressure and latency with large
-  ///   datasets (1,000+ events). Prefer ``events(limit:offset:)`` for
+  ///   datasets (1,000+ events).
+  ///
+  ///   **Production recommendation:** Use ``events(limit:offset:)`` for
   ///   paginated access, or ``EncryptedMemoryStore/eventStream(limit:offset:)``
-  ///   for lazy, memory-efficient decryption.
+  ///   for lazy, memory-efficient decryption. Reserve `allEvents()` for
+  ///   debugging, testing, and small datasets only.
   func allEvents() async -> [SpatialEvent]
 
   /// Returns a paginated slice of stored events in chronological order.

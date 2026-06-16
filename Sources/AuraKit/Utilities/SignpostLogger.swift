@@ -44,7 +44,7 @@ public enum SignpostLogger {
   /// The subsystem matches AuraKit's unified logging subsystem for consistent
   /// filtering in Console.app and Instruments.
   private static let log = OSLog(
-    subsystem: "com.aurakit.framework",
+    subsystem: AuraKitConstants.subsystem,
     category: .pointsOfInterest
   )
 

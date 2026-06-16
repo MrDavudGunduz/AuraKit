@@ -72,7 +72,7 @@ public actor KeyManager {
 
   /// Shared logger for all `KeyManager` extension files.
   static let logger = Logger(
-    subsystem: "com.aurakit.framework",
+    subsystem: AuraKitConstants.subsystem,
     category: "KeyManager"
   )
 
@@ -86,6 +86,15 @@ public actor KeyManager {
 
   /// Keychain account identifier for the Secure Enclave key reference.
   static let keyRefKeychainAccount = "se-key-ref"
+
+  /// Keychain account identifier for the persisted key version counter.
+  ///
+  /// The key version is stored as a UTF-8 encoded integer string in the Keychain.
+  /// This ensures the version counter survives app restarts and crashes,
+  /// preventing `keyVersion` from resetting to `0` after relaunch — which
+  /// would break partial re-encryption migration logic that relies on
+  /// matching `RawMemoryNode.keyVersion` against the current version.
+  static let keyVersionKeychainAccount = "key-version"
 
   /// HKDF shared info — domain separation for AuraKit v1 key derivation.
   static let hkdfSharedInfo = Data("AuraKit.v1".utf8)
@@ -109,6 +118,7 @@ public actor KeyManager {
 
   /// Monotonically increasing key version counter.
   /// Incremented each time ``rotateKey()`` is called.
+  /// Persisted to Keychain to survive app restarts.
   /// Accessed by `KeyManager+Rotation.swift`.
   var _keyVersion: Int = 0
 
@@ -116,7 +126,12 @@ public actor KeyManager {
 
   /// Creates a `KeyManager`. Key generation and derivation are deferred until
   /// the first call to ``symmetricKey()``.
-  public init() {}
+  ///
+  /// The ``keyVersion`` counter is bootstrapped from the Keychain on init.
+  /// If no persisted version exists (first launch), it defaults to `0`.
+  public init() {
+    self._keyVersion = Self.bootstrapKeyVersion()
+  }
 
   /// Creates a `KeyManager` with a pre-generated symmetric key.
   ///
@@ -155,6 +170,51 @@ public actor KeyManager {
     cachedKey = key
     KeyManager.logger.info("[AuraKit] KeyManager: Symmetric key derived successfully.")
     return key
+  }
+
+  // MARK: - Key Version Bootstrap
+
+  /// Reads the persisted key version from the Keychain.
+  ///
+  /// Called during `init()` to restore the version counter across app restarts.
+  /// Returns `0` if no version has been persisted yet (first launch).
+  ///
+  /// - Note: This is a `static` method (not `nonisolated`) so it can be called
+  ///   from the actor's synchronous `init` without requiring an actor hop.
+  private static func bootstrapKeyVersion() -> Int {
+    guard let data = KeychainHelper.retrieve(
+      service: keychainService,
+      account: keyVersionKeychainAccount
+    ),
+      let string = String(data: data, encoding: .utf8),
+      let version = Int(string)
+    else {
+      return 0
+    }
+    logger.debug(
+      "[AuraKit] KeyManager: Bootstrapped keyVersion from Keychain: \(version)."
+    )
+    return version
+  }
+
+  /// Persists the current key version to the Keychain.
+  ///
+  /// Called after each successful ``rotateKey()`` to ensure the version
+  /// counter survives app restarts. If the write fails, a fault-level log
+  /// is emitted but the rotation is **not** rolled back — the in-memory
+  /// version remains correct for the current session.
+  func persistKeyVersion() {
+    let data = Data(String(_keyVersion).utf8)
+    let stored = KeychainHelper.store(
+      data: data,
+      service: KeyManager.keychainService,
+      account: KeyManager.keyVersionKeychainAccount
+    )
+    if !stored {
+      KeyManager.logger.fault(
+        "[AuraKit] KeyManager: Failed to persist keyVersion \(self._keyVersion) to Keychain."
+      )
+    }
   }
 
   /// Clears the cached symmetric key from memory.

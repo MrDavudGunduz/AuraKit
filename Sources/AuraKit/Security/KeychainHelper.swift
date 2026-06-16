@@ -29,7 +29,7 @@ enum KeychainHelper {
 
   /// Logger for Keychain diagnostic output.
   private static let logger = Logger(
-    subsystem: "com.aurakit.framework",
+    subsystem: AuraKitConstants.subsystem,
     category: "KeychainHelper"
   )
 
@@ -53,37 +53,60 @@ enum KeychainHelper {
     account: String,
     accessGroup: String? = nil
   ) -> Bool {
-    // Delete any existing item first (idempotent)
-    var deleteQuery: [String: Any] = [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: service,
-      kSecAttrAccount as String: account,
-    ]
-    if let group = accessGroup {
-      deleteQuery[kSecAttrAccessGroup as String] = group
-    }
-    SecItemDelete(deleteQuery as CFDictionary)
+    // SECURITY: Atomic update pattern.
+    //
+    // Previous implementation used Delete + Add, which is NOT crash-safe:
+    // if the process is killed between SecItemDelete and SecItemAdd, the
+    // existing item is lost and the new item is never written — causing
+    // permanent data loss for encryption keys and HKDF salts.
+    //
+    // New approach: SecItemUpdate first (atomic in-place replacement),
+    // falling back to SecItemAdd only when the item doesn't exist yet.
+    // This ensures the existing item is never deleted without being replaced.
 
-    // Add the new item — uses Swift Bool literals instead of force-unwrapped
-    // CFBoolean constants for safety and SwiftLint compliance.
-    var addQuery: [String: Any] = [
+    var matchQuery: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service,
       kSecAttrAccount as String: account,
-      kSecValueData as String: data,
-      kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-      kSecAttrSynchronizable as String: false,
     ]
     if let group = accessGroup {
-      addQuery[kSecAttrAccessGroup as String] = group
+      matchQuery[kSecAttrAccessGroup as String] = group
     }
-    let status = SecItemAdd(addQuery as CFDictionary, nil)
-    if status != errSecSuccess {
-      KeychainHelper.logger.error(
-        "[AuraKit] KeychainHelper: SecItemAdd failed — OSStatus \(status) for account '\(account)'."
-      )
+
+    // Attempt atomic in-place update first.
+    let updateAttributes: [String: Any] = [
+      kSecValueData as String: data,
+    ]
+    let updateStatus = SecItemUpdate(
+      matchQuery as CFDictionary,
+      updateAttributes as CFDictionary
+    )
+
+    if updateStatus == errSecSuccess {
+      return true
     }
-    return status == errSecSuccess
+
+    // Item does not exist yet — perform initial add with full attributes.
+    if updateStatus == errSecItemNotFound {
+      var addQuery = matchQuery
+      addQuery[kSecValueData as String] = data
+      addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+      addQuery[kSecAttrSynchronizable as String] = false
+
+      let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+      if addStatus != errSecSuccess {
+        KeychainHelper.logger.error(
+          "[AuraKit] KeychainHelper: SecItemAdd failed — OSStatus \(addStatus) for account '\(account)'."
+        )
+      }
+      return addStatus == errSecSuccess
+    }
+
+    // Unexpected error during update
+    KeychainHelper.logger.error(
+      "[AuraKit] KeychainHelper: SecItemUpdate failed — OSStatus \(updateStatus) for account '\(account)'."
+    )
+    return false
   }
 
   /// Throwing variant of ``store(data:service:account:accessGroup:)`` that
@@ -105,37 +128,56 @@ enum KeychainHelper {
     account: String,
     accessGroup: String? = nil
   ) throws {
-    var deleteQuery: [String: Any] = [
+    // Atomic update pattern — same crash-safety rationale as `store()`.
+    var matchQuery: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: service,
       kSecAttrAccount as String: account,
     ]
     if let group = accessGroup {
-      deleteQuery[kSecAttrAccessGroup as String] = group
+      matchQuery[kSecAttrAccessGroup as String] = group
     }
-    SecItemDelete(deleteQuery as CFDictionary)
 
-    var addQuery: [String: Any] = [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: service,
-      kSecAttrAccount as String: account,
+    let updateAttributes: [String: Any] = [
       kSecValueData as String: data,
-      kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-      kSecAttrSynchronizable as String: false,
     ]
-    if let group = accessGroup {
-      addQuery[kSecAttrAccessGroup as String] = group
+    let updateStatus = SecItemUpdate(
+      matchQuery as CFDictionary,
+      updateAttributes as CFDictionary
+    )
+
+    if updateStatus == errSecSuccess {
+      return
     }
-    let status = SecItemAdd(addQuery as CFDictionary, nil)
-    guard status == errSecSuccess else {
-      KeychainHelper.logger.error(
-        "[AuraKit] KeychainHelper: SecItemAdd failed — OSStatus \(status) for account '\(account)'."
-      )
-      throw AuraError.keychainOperationFailed(
-        operation: "store",
-        status: Int(status)
-      )
+
+    // Item does not exist yet — perform initial add with full attributes.
+    if updateStatus == errSecItemNotFound {
+      var addQuery = matchQuery
+      addQuery[kSecValueData as String] = data
+      addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+      addQuery[kSecAttrSynchronizable as String] = false
+
+      let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
+      guard addStatus == errSecSuccess else {
+        KeychainHelper.logger.error(
+          "[AuraKit] KeychainHelper: SecItemAdd failed — OSStatus \(addStatus) for account '\(account)'."
+        )
+        throw AuraError.keychainOperationFailed(
+          operation: "store",
+          status: Int(addStatus)
+        )
+      }
+      return
     }
+
+    // Unexpected error during update
+    KeychainHelper.logger.error(
+      "[AuraKit] KeychainHelper: SecItemUpdate failed — OSStatus \(updateStatus) for account '\(account)'."
+    )
+    throw AuraError.keychainOperationFailed(
+      operation: "store",
+      status: Int(updateStatus)
+    )
   }
 
   // MARK: - Retrieve

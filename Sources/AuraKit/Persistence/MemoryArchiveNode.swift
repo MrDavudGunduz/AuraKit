@@ -20,7 +20,7 @@ import SwiftData
 /// that also aligns with `RawMemoryNode`'s pattern (no embedded logger).
 private enum MemoryArchiveNodeLog {
   static let logger = Logger(
-    subsystem: "com.aurakit.framework",
+    subsystem: AuraKitConstants.subsystem,
     category: "MemoryArchiveNode"
   )
 }

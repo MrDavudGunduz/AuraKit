@@ -46,14 +46,20 @@ public actor MemoryStore: SpatialEventStore {
   // MARK: - Internal Logger
 
   private static let logger = Logger(
-    subsystem: "com.aurakit.framework",
+    subsystem: AuraKitConstants.subsystem,
     category: "MemoryStore"
   )
 
   // MARK: - State
 
-  /// Pre-allocated fixed-size circular storage (bounded mode) or dynamic array (unbounded).
-  private var storage: [SpatialEvent?]
+  /// Pre-allocated fixed-size circular storage for bounded mode.
+  /// Elements are wrapped around using modular indexing.
+  private var boundedStorage: [SpatialEvent?]
+
+  /// Dynamic array storage for unbounded mode.
+  /// Unlike `boundedStorage`, this never contains `nil` elements — eliminating
+  /// the `compactMap { $0 }` overhead that existed in the previous implementation.
+  private var unboundedStorage: [SpatialEvent]
 
   /// Index at which the next write will occur (bounded mode).
   private var writeIndex: Int = 0
@@ -93,9 +99,10 @@ public actor MemoryStore: SpatialEventStore {
     }
 
     // Pre-allocate full capacity for bounded mode; empty for unbounded.
-    self.storage = safeCapacity > 0
+    self.boundedStorage = safeCapacity > 0
       ? [SpatialEvent?](repeating: nil, count: safeCapacity)
       : []
+    self.unboundedStorage = []
   }
 
   // MARK: - Mutations
@@ -109,11 +116,11 @@ public actor MemoryStore: SpatialEventStore {
   /// - Parameter event: The ``SpatialEvent`` to persist.
   public func append(_ event: SpatialEvent) {
     if isBounded {
-      storage[writeIndex] = event
+      boundedStorage[writeIndex] = event
       writeIndex = (writeIndex + 1) % capacity
       if _count < capacity { _count += 1 }
     } else {
-      storage.append(event)
+      unboundedStorage.append(event)
       _count += 1
     }
   }
@@ -134,16 +141,14 @@ public actor MemoryStore: SpatialEventStore {
 
     if isBounded {
       for event in events {
-        storage[writeIndex] = event
+        boundedStorage[writeIndex] = event
         writeIndex = (writeIndex + 1) % capacity
         if _count < capacity { _count += 1 }
       }
     } else {
-      storage.reserveCapacity(storage.count + events.count)
-      for event in events {
-        storage.append(event)
-        _count += 1
-      }
+      unboundedStorage.reserveCapacity(unboundedStorage.count + events.count)
+      unboundedStorage.append(contentsOf: events)
+      _count += events.count
     }
   }
 
@@ -163,13 +168,14 @@ public actor MemoryStore: SpatialEventStore {
       let head = _count == capacity ? writeIndex : 0
       for idx in 0..<_count {
         let index = (head + idx) % capacity
-        if let event = storage[index] {
+        if let event = boundedStorage[index] {
           result.append(event)
         }
       }
       return result
     } else {
-      return storage.compactMap { $0 }
+      // Unbounded storage never contains nil — return directly.
+      return unboundedStorage
     }
   }
 
@@ -197,14 +203,15 @@ public actor MemoryStore: SpatialEventStore {
 
       for idx in 0..<effectiveLimit {
         let index = (startIndex + idx) % capacity
-        if let event = storage[index] {
+        if let event = boundedStorage[index] {
           result.append(event)
         }
       }
       return result
     } else {
+      // Unbounded storage never contains nil — direct slice, no compactMap.
       let end = min(offset + limit, _count)
-      return storage[offset..<end].compactMap { $0 }
+      return Array(unboundedStorage[offset..<end])
     }
   }
 
@@ -220,10 +227,10 @@ public actor MemoryStore: SpatialEventStore {
   ///   calling this method in production code.
   public func clear() {
     if isBounded {
-      for idx in 0..<capacity { storage[idx] = nil }
+      for idx in 0..<capacity { boundedStorage[idx] = nil }
       writeIndex = 0
     } else {
-      storage.removeAll(keepingCapacity: true)
+      unboundedStorage.removeAll(keepingCapacity: true)
     }
     _count = 0
   }

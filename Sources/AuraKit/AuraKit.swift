@@ -143,7 +143,7 @@ public final class AuraKit {
   // MARK: - Internal Logger
 
   private static let logger = Logger(
-    subsystem: "com.aurakit.framework",
+    subsystem: AuraKitConstants.subsystem,
     category: "AuraKit"
   )
 
@@ -270,6 +270,24 @@ public final class AuraKit {
     return capture
   }
 
+  /// The active ``CaptureActor``, or `nil` if not yet configured.
+  ///
+  /// A non-throwing alternative to ``capture()`` for hot-path contexts where
+  /// catching ``AuraError/notConfigured`` would add unnecessary overhead:
+  ///
+  /// ```swift
+  /// // Guard-style — no try/catch needed
+  /// guard let capture = AuraKit.shared.captureOrNil else { return }
+  /// await capture.record(event: event)
+  /// ```
+  ///
+  /// Use ``capture()`` when the not-configured state is truly exceptional
+  /// and should propagate as an error. Use `captureOrNil` when the caller
+  /// can gracefully skip recording (e.g., optional telemetry).
+  public var captureOrNil: CaptureActor? {
+    _capture
+  }
+
   /// Whether `configure(with:)` has been called and the pipeline is active.
   ///
   /// Use this for guard-style checks where catching `AuraError.notConfigured`
@@ -281,15 +299,56 @@ public final class AuraKit {
   /// Tears down the current configuration, allowing ``configure(with:)`` to
   /// be called again.
   ///
-  /// - Warning: This discards the current ``CaptureActor`` and all in-flight
-  ///   events. Intended for use in unit tests only — do not call in production.
-  ///   If in-flight buffered events exist at teardown time, a fault-level log
-  ///   is emitted for diagnostics.
+  /// - Warning: This is a **hard reset** that discards the current
+  ///   ``CaptureActor`` and all in-flight events **without flushing**.
+  ///   Intended for use in **unit tests only** — do not call in production.
+  ///   For production teardown, use ``shutdown()`` instead, which flushes
+  ///   buffered events before tearing down.
   public func reset() {
     if _capture != nil {
-      AuraKit.logger.info("[AuraKit] reset() — tearing down capture pipeline.")
+      AuraKit.logger.info("[AuraKit] reset() — tearing down capture pipeline (hard reset, no flush).")
     }
     _capture = nil
+  }
+
+  /// Gracefully shuts down the capture pipeline, flushing all in-flight events
+  /// before teardown.
+  ///
+  /// Unlike ``reset()``, which discards buffered events immediately, `shutdown()`
+  /// first drains the L1 ``RingBuffer`` and writes all pending gaze events to the
+  /// persistent ``SpatialEventStore`` via ``CaptureActor/flushToStore()``. This
+  /// ensures zero data loss during application lifecycle transitions.
+  ///
+  /// After this call, ``isConfigured`` returns `false` and ``configure(with:)``
+  /// may be called again.
+  ///
+  /// ## Usage
+  ///
+  /// ```swift
+  /// // In your App's scenePhase handler or applicationWillTerminate:
+  /// await AuraKit.shared.shutdown()
+  /// ```
+  ///
+  /// - Returns: The number of buffered events that were flushed to the store.
+  ///   Returns `0` if no events were buffered or if the pipeline was not configured.
+  @discardableResult
+  public func shutdown() async -> Int {
+    guard let capture = _capture else {
+      AuraKit.logger.info("[AuraKit] shutdown() — pipeline not configured, nothing to tear down.")
+      return 0
+    }
+
+    let flushedCount = await capture.flushToStore()
+
+    if flushedCount > 0 {
+      AuraKit.logger.info(
+        "[AuraKit] shutdown() — flushed \(flushedCount) buffered events to store before teardown."
+      )
+    }
+
+    AuraKit.logger.info("[AuraKit] shutdown() — capture pipeline torn down gracefully.")
+    _capture = nil
+    return flushedCount
   }
 
   // MARK: - Convenience Static API
@@ -336,5 +395,12 @@ public final class AuraKit {
   /// - Throws: ``AuraError/notConfigured`` if not yet configured.
   public static func capture() throws -> CaptureActor {
     try shared.capture()
+  }
+
+  /// Convenience static wrapper for ``captureOrNil``.
+  ///
+  /// Returns `nil` if not yet configured.
+  public static var captureOrNil: CaptureActor? {
+    shared.captureOrNil
   }
 }

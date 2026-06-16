@@ -54,6 +54,20 @@ public struct AuraConfiguration: Sendable, Equatable {
   /// Set to `0` to disable the cap (unbounded — not recommended in production).
   public static let defaultStoreCapacity: Int = 10_000
 
+  /// Default number of nodes fetched per batch during encrypted streaming.
+  ///
+  /// Empirically tuned: 100 nodes × ~2 KB average ciphertext ≈ 200 KB peak
+  /// per batch — well within comfortable memory budgets on all Apple platforms.
+  /// Smaller values reduce peak memory; larger values reduce fetch overhead.
+  public static let defaultStreamBatchSize: Int = 100
+
+  /// Default threshold for emitting runtime warnings when ``EncryptedMemoryStore/allEvents()``
+  /// or ``EncryptedMemoryStore/recallAndFetchAll()`` is called on a store containing more
+  /// than this many nodes.
+  ///
+  /// Set to `0` to disable the warning entirely.
+  public static let defaultLargeDatasetWarningThreshold: Int = AuraKitConstants.defaultLargeDatasetWarningThreshold
+
   // MARK: - Properties
 
   /// Heuristic importance weight for high-signal interaction events.
@@ -80,6 +94,24 @@ public struct AuraConfiguration: Sendable, Equatable {
   /// long-running visionOS sessions).
   public let storeCapacity: Int
 
+  /// Number of nodes fetched per internal batch during
+  /// ``EncryptedMemoryStore/eventStream(limit:offset:batchSize:)``.
+  ///
+  /// Must be a positive integer. Smaller values reduce peak memory usage;
+  /// larger values reduce the number of SwiftData fetch round-trips.
+  /// Defaults to `100`.
+  public let streamBatchSize: Int
+
+  /// Node count threshold at which ``EncryptedMemoryStore/allEvents()``
+  /// emits a runtime `Logger.warning` about potential memory pressure.
+  ///
+  /// When the store contains more nodes than this value, a diagnostic
+  /// warning is logged recommending ``EncryptedMemoryStore/events(limit:offset:)``
+  /// or ``EncryptedMemoryStore/eventStream(limit:offset:batchSize:)`` instead.
+  ///
+  /// Set to `0` to disable the warning. Defaults to `1_000`.
+  public let largeDatasetWarningThreshold: Int
+
   // MARK: - Init
 
   /// Creates a validated `AuraConfiguration`, throwing if any parameter is out of range.
@@ -90,13 +122,16 @@ public struct AuraConfiguration: Sendable, Equatable {
   ///   - bufferCapacity: L1 ring buffer capacity. Default `512`.
   ///   - storeCapacity: Max events in the persistent `MemoryStore`. Default `10_000`.
   ///     Pass `0` to disable the cap (unbounded).
+  ///   - streamBatchSize: Nodes per batch in streaming decryption. Default `100`.
   /// - Throws: ``AuraError/invalidConfiguration(reason:)`` if any parameter
   ///   is out of its valid range.
   public init(
     interactionWeight: Double = defaultInteractionWeight,
     gazeWeight: Double = defaultGazeWeight,
     bufferCapacity: Int = defaultBufferCapacity,
-    storeCapacity: Int = defaultStoreCapacity
+    storeCapacity: Int = defaultStoreCapacity,
+    streamBatchSize: Int = defaultStreamBatchSize,
+    largeDatasetWarningThreshold: Int = defaultLargeDatasetWarningThreshold
   ) throws {
     guard (0.0...1.0).contains(interactionWeight) else {
       throw AuraError.invalidConfiguration(
@@ -118,10 +153,22 @@ public struct AuraConfiguration: Sendable, Equatable {
         reason: "storeCapacity must be >= 0, got \(storeCapacity)"
       )
     }
+    guard streamBatchSize > 0 else {
+      throw AuraError.invalidConfiguration(
+        reason: "streamBatchSize must be > 0, got \(streamBatchSize)"
+      )
+    }
+    guard largeDatasetWarningThreshold >= 0 else {
+      throw AuraError.invalidConfiguration(
+        reason: "largeDatasetWarningThreshold must be >= 0, got \(largeDatasetWarningThreshold)"
+      )
+    }
     self.interactionWeight = interactionWeight
     self.gazeWeight = gazeWeight
     self.bufferCapacity = bufferCapacity
     self.storeCapacity = storeCapacity
+    self.streamBatchSize = streamBatchSize
+    self.largeDatasetWarningThreshold = largeDatasetWarningThreshold
   }
 
   /// Private unchecked initialiser for known-valid constant values only.
@@ -131,12 +178,16 @@ public struct AuraConfiguration: Sendable, Equatable {
     uncheckedInteractionWeight interactionWeight: Double,
     gazeWeight: Double,
     bufferCapacity: Int,
-    storeCapacity: Int
+    storeCapacity: Int,
+    streamBatchSize: Int,
+    largeDatasetWarningThreshold: Int
   ) {
     self.interactionWeight = interactionWeight
     self.gazeWeight = gazeWeight
     self.bufferCapacity = bufferCapacity
     self.storeCapacity = storeCapacity
+    self.streamBatchSize = streamBatchSize
+    self.largeDatasetWarningThreshold = largeDatasetWarningThreshold
   }
 }
 
@@ -150,10 +201,14 @@ extension AuraConfiguration {
   /// - `gazeWeight`: `0.3`
   /// - `bufferCapacity`: `512`
   /// - `storeCapacity`: `10_000`
+  /// - `streamBatchSize`: `100`
+  /// - `largeDatasetWarningThreshold`: `1_000`
   public static let `default` = AuraConfiguration(
     uncheckedInteractionWeight: defaultInteractionWeight,
     gazeWeight: defaultGazeWeight,
     bufferCapacity: defaultBufferCapacity,
-    storeCapacity: defaultStoreCapacity
+    storeCapacity: defaultStoreCapacity,
+    streamBatchSize: defaultStreamBatchSize,
+    largeDatasetWarningThreshold: defaultLargeDatasetWarningThreshold
   )
 }
