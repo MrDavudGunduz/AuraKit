@@ -54,6 +54,11 @@ AuraKit follows a **Zero-Trust, Privacy-First** philosophy:
 
 ## Topics
 
+### Essentials
+
+- <doc:GettingStarted>
+- <doc:SecurityArchitecture>
+
 ### Configuration
 
 - ``AuraConfiguration``
@@ -74,6 +79,7 @@ AuraKit follows a **Zero-Trust, Privacy-First** philosophy:
 - ``MemoryStore``
 - ``EncryptedMemoryStore``
 - ``StoreMetrics``
+- ``DroppedEvent``
 
 ### Persistence
 
