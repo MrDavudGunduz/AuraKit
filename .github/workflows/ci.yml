@@ -60,7 +60,7 @@ jobs:
         run: |
           # Run SwiftLint as a standalone tool to catch edge cases that
           # the build-time plugin may miss (e.g., disabled targets, conditional compilation).
-          swift run -c release swiftlint lint --strict --reporter github-actions 2>&1 || true
+          swift run -c release swiftlint lint --strict --reporter github-actions 2>&1 || echo "::warning::SwiftLint reported issues — review annotations above."
 
       # ── Test ───────────────────────────────────────────────────────────
 
