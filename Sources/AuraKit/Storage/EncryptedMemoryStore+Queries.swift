@@ -151,6 +151,133 @@ extension EncryptedMemoryStore {
   }
 }
 
+// MARK: - EncryptedMemoryStore + Safe Full-Table Access
+
+extension EncryptedMemoryStore {
+
+  /// Fetches all stored events **only if** the total node count is at or below
+  /// the specified threshold.
+  ///
+  /// This is a **safe-guard wrapper** around ``allEvents()`` designed for
+  /// production code paths where accidentally triggering a full-table decrypt
+  /// on a large dataset could cause memory pressure spikes or UI jank.
+  ///
+  /// ## Usage
+  ///
+  /// ```swift
+  /// // Safe: throws if the store has grown beyond 500 nodes
+  /// let events = try await store.allEventsIfSmallDataset(threshold: 500)
+  ///
+  /// // Or use the default threshold from AuraConfiguration
+  /// let events = try await store.allEventsIfSmallDataset()
+  /// ```
+  ///
+  /// ## When to Use
+  ///
+  /// Use ``allEventsIfSmallDataset(threshold:)`` instead of ``allEvents()`` when:
+  /// - The caller cannot guarantee the dataset size (e.g., user-facing features)
+  /// - Memory budget is constrained (e.g., widgets, App Intents, extensions)
+  /// - You want a compile-time-enforced reminder to handle large datasets
+  ///
+  /// For known-small datasets or test code, ``allEvents()`` remains appropriate.
+  ///
+  /// - Parameter threshold: Maximum node count before this method refuses to
+  ///   proceed. Defaults to ``AuraConfiguration/defaultLargeDatasetWarningThreshold``.
+  /// - Returns: All stored events in chronological order.
+  /// - Throws: ``AuraError/persistenceFailed(reason:)`` if the store contains
+  ///   more nodes than `threshold`.
+  public func allEventsIfSmallDataset(
+    threshold: Int = AuraConfiguration.defaultLargeDatasetWarningThreshold
+  ) async throws -> [SpatialEvent] {
+    let nodeCount = await count
+    guard nodeCount <= threshold else {
+      throw AuraError.persistenceFailed(
+        reason: "allEventsIfSmallDataset() refused: store contains \(nodeCount) nodes "
+          + "(threshold: \(threshold)). Use events(limit:offset:) or eventStream() instead."
+      )
+    }
+    return await allEvents()
+  }
+}
+
+// MARK: - StoreHealth
+
+/// An immutable, `Sendable` diagnostic snapshot of ``EncryptedMemoryStore`` state
+/// captured at a single point in time.
+///
+/// Combines node counts, write/read metrics, and dataset size classification
+/// into a single value suitable for production telemetry dashboards.
+///
+/// ```swift
+/// let health = await store.storeHealth
+/// if health.isLargeDataset {
+///     logger.warning("Store has \(health.totalNodeCount) nodes — consider pruning.")
+/// }
+/// ```
+public struct StoreHealth: Sendable, Equatable {
+
+  /// Total number of encrypted nodes in the store.
+  public let totalNodeCount: Int
+
+  /// Number of gaze-type nodes.
+  public let gazeNodeCount: Int
+
+  /// Number of interaction-type nodes (touch + move + pinch + drag).
+  public let interactionNodeCount: Int
+
+  /// A snapshot of write/read observability counters.
+  public let metrics: StoreMetrics
+
+  /// Whether the dataset exceeds the configured warning threshold.
+  public let isLargeDataset: Bool
+
+  /// The configured warning threshold for reference.
+  public let largeDatasetThreshold: Int
+}
+
+// MARK: - EncryptedMemoryStore + Health Diagnostics
+
+extension EncryptedMemoryStore {
+
+  /// Captures a comprehensive diagnostic snapshot of the store's current state.
+  ///
+  /// This property aggregates node counts, event-type breakdowns, and
+  /// write/read metrics into a single ``StoreHealth`` value. All queries
+  /// operate on unencrypted metadata — **no decryption occurs**.
+  ///
+  /// Designed for production telemetry:
+  ///
+  /// ```swift
+  /// let health = await store.storeHealth
+  /// analytics.track("aurakit.health", properties: [
+  ///     "total_nodes": health.totalNodeCount,
+  ///     "gaze_nodes": health.gazeNodeCount,
+  ///     "interaction_nodes": health.interactionNodeCount,
+  ///     "write_success_rate": health.metrics.writeSuccessRate,
+  ///     "is_large": health.isLargeDataset,
+  /// ])
+  /// ```
+  public var storeHealth: StoreHealth {
+    get async {
+      let total = await count
+      let gazeCount = await fetchNodeCount(eventType: .gaze)
+
+      // Interaction count = total - gaze (avoids 4 separate queries)
+      let interactionCount = total - gazeCount
+
+      return StoreHealth(
+        totalNodeCount: total,
+        gazeNodeCount: gazeCount,
+        interactionNodeCount: interactionCount,
+        metrics: metrics,
+        isLargeDataset: largeDatasetWarningThreshold > 0
+          && total > largeDatasetWarningThreshold,
+        largeDatasetThreshold: largeDatasetWarningThreshold
+      )
+    }
+  }
+}
+
 // MARK: - EncryptedMemoryStore + Pruning & Lifecycle
 
 extension EncryptedMemoryStore {
