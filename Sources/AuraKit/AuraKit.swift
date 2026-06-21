@@ -301,14 +301,45 @@ public final class AuraKit {
   ///
   /// - Warning: This is a **hard reset** that discards the current
   ///   ``CaptureActor`` and all in-flight events **without flushing**.
-  ///   Intended for use in **unit tests only** — do not call in production.
+  ///   Available in **DEBUG builds only** — in release builds this method
+  ///   is a **no-op** that logs a fault-level diagnostic.
   ///   For production teardown, use ``shutdown()`` instead, which flushes
   ///   buffered events before tearing down.
+  ///
+  /// ## Production Safety
+  ///
+  /// Calling `reset()` in a release build will **not** tear down the pipeline.
+  /// This prevents accidental data loss from a misplaced `reset()` call in
+  /// production code paths. The fault-level log ensures the call is visible
+  /// in production telemetry.
+  ///
+  /// ```swift
+  /// // ✅ Production teardown — flushes buffered events
+  /// await AuraKit.shared.shutdown()
+  ///
+  /// // ❌ Production — no-op, logs fault
+  /// AuraKit.shared.reset()
+  ///
+  /// // ✅ Test teardown — resets immediately
+  /// AuraKit.shared.reset()  // Works in DEBUG builds
+  /// ```
   public func reset() {
+    #if !DEBUG
+    AuraKit.logger.fault(
+      """
+      [AuraKit] reset() called in RELEASE build — this is a no-op. \
+      Use shutdown() for production teardown. reset() is intended for \
+      unit tests only and is disabled in release builds to prevent \
+      accidental data loss.
+      """
+    )
+    return
+    #else
     if _capture != nil {
       AuraKit.logger.info("[AuraKit] reset() — tearing down capture pipeline (hard reset, no flush).")
     }
     _capture = nil
+    #endif
   }
 
   /// Gracefully shuts down the capture pipeline, flushing all in-flight events
@@ -397,76 +428,5 @@ public final class AuraKit {
     guard _capture == nil else { return }
     _capture = CaptureActor(config: config, store: store)
   }
-
-  // MARK: - Convenience Static API
-
-  /// Convenience static wrapper for ``configure(with:)``.
-  ///
-  /// Equivalent to `try AuraKit.shared.configure(with: config)`.
-  /// - Throws: ``AuraError/alreadyConfigured`` if the pipeline is already active.
-  public static func configure(with config: AuraConfiguration) throws {
-    try shared.configure(with: config)
-  }
-
-  /// Convenience static wrapper for ``configure(with:store:)``.
-  ///
-  /// Equivalent to `try AuraKit.shared.configure(with: config, store: store)`.
-  /// - Throws: ``AuraError/alreadyConfigured`` if the pipeline is already active.
-  public static func configure(
-    with config: AuraConfiguration,
-    store: (any SpatialEventStore)?
-  ) throws {
-    try shared.configure(with: config, store: store)
-  }
-
-  /// Convenience static wrapper for the throwing ``configure(interactionWeight:gazeWeight:bufferCapacity:storeCapacity:)`` overload.
-  ///
-  /// - Throws: ``AuraError/invalidConfiguration(reason:)`` if any parameter is out of range,
-  ///   or ``AuraError/alreadyConfigured`` if the pipeline is already active.
-  public static func configure(
-    interactionWeight: Double = AuraConfiguration.defaultInteractionWeight,
-    gazeWeight: Double = AuraConfiguration.defaultGazeWeight,
-    bufferCapacity: Int = AuraConfiguration.defaultBufferCapacity,
-    storeCapacity: Int = AuraConfiguration.defaultStoreCapacity
-  ) throws {
-    try shared.configure(
-      interactionWeight: interactionWeight,
-      gazeWeight: gazeWeight,
-      bufferCapacity: bufferCapacity,
-      storeCapacity: storeCapacity
-    )
-  }
-
-  /// Convenience static wrapper for ``capture()``.
-  ///
-  /// - Throws: ``AuraError/notConfigured`` if not yet configured.
-  public static func capture() throws -> CaptureActor {
-    try shared.capture()
-  }
-
-  /// Convenience static wrapper for ``captureOrNil``.
-  ///
-  /// Returns `nil` if not yet configured.
-  public static var captureOrNil: CaptureActor? {
-    shared.captureOrNil
-  }
-
-  /// Convenience static wrapper for ``configureIfNeeded(with:)``.
-  ///
-  /// Configures the pipeline only if it has not been configured yet.
-  /// Safe to call multiple times — subsequent calls are no-ops.
-  public static func configureIfNeeded(with config: AuraConfiguration) {
-    shared.configureIfNeeded(with: config)
-  }
-
-  /// Convenience static wrapper for ``configureIfNeeded(with:store:)``.
-  ///
-  /// Configures the pipeline with an optional custom store only if it
-  /// has not been configured yet.
-  public static func configureIfNeeded(
-    with config: AuraConfiguration,
-    store: (any SpatialEventStore)?
-  ) {
-    shared.configureIfNeeded(with: config, store: store)
-  }
 }
+
