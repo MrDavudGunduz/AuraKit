@@ -351,6 +351,53 @@ public final class AuraKit {
     return flushedCount
   }
 
+  // MARK: - Idempotent Configuration
+
+  /// Configures the pipeline **only if** it has not been configured yet.
+  ///
+  /// Unlike ``configure(with:)``, which throws ``AuraError/alreadyConfigured``
+  /// on repeated calls, `configureIfNeeded` is a **no-op** when the pipeline
+  /// is already active. This makes it safe to call from multiple entry points
+  /// (e.g., both `App.init` and a `.task` modifier) without coordination.
+  ///
+  /// ```swift
+  /// // Safe to call multiple times — only the first call takes effect
+  /// AuraKit.shared.configureIfNeeded(with: config)
+  /// AuraKit.shared.configureIfNeeded(with: config) // no-op, no throw
+  /// ```
+  ///
+  /// ## When to Use
+  ///
+  /// | Scenario | Recommended API |
+  /// |----------|-----------------|
+  /// | Single, well-defined init point | ``configure(with:)`` (strict) |
+  /// | Multiple possible init paths | `configureIfNeeded(with:)` (idempotent) |
+  /// | Test teardown / reconfiguration | ``reset()`` + ``configure(with:)`` |
+  ///
+  /// - Parameter config: The validated ``AuraConfiguration`` to apply.
+  ///   Ignored if the pipeline is already configured.
+  public func configureIfNeeded(with config: AuraConfiguration) {
+    configureIfNeeded(with: config, store: nil)
+  }
+
+  /// Configures the pipeline with an optional custom store **only if** it has
+  /// not been configured yet.
+  ///
+  /// This is the idempotent counterpart to ``configure(with:store:)``.
+  /// If the pipeline is already active, this method returns silently.
+  ///
+  /// - Parameters:
+  ///   - config: The validated ``AuraConfiguration`` to apply.
+  ///   - store: An optional ``SpatialEventStore`` for persistence.
+  ///     Pass `nil` to use the default in-memory store.
+  public func configureIfNeeded(
+    with config: AuraConfiguration,
+    store: (any SpatialEventStore)?
+  ) {
+    guard _capture == nil else { return }
+    _capture = CaptureActor(config: config, store: store)
+  }
+
   // MARK: - Convenience Static API
 
   /// Convenience static wrapper for ``configure(with:)``.
@@ -402,5 +449,24 @@ public final class AuraKit {
   /// Returns `nil` if not yet configured.
   public static var captureOrNil: CaptureActor? {
     shared.captureOrNil
+  }
+
+  /// Convenience static wrapper for ``configureIfNeeded(with:)``.
+  ///
+  /// Configures the pipeline only if it has not been configured yet.
+  /// Safe to call multiple times — subsequent calls are no-ops.
+  public static func configureIfNeeded(with config: AuraConfiguration) {
+    shared.configureIfNeeded(with: config)
+  }
+
+  /// Convenience static wrapper for ``configureIfNeeded(with:store:)``.
+  ///
+  /// Configures the pipeline with an optional custom store only if it
+  /// has not been configured yet.
+  public static func configureIfNeeded(
+    with config: AuraConfiguration,
+    store: (any SpatialEventStore)?
+  ) {
+    shared.configureIfNeeded(with: config, store: store)
   }
 }
