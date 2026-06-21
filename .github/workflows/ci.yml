@@ -65,7 +65,33 @@ jobs:
       # ── Test ───────────────────────────────────────────────────────────
 
       - name: Test (parallel)
-        run: swift test --parallel
+        run: swift test --parallel 2>&1 | tee test-output.txt
+
+      - name: Test Result Summary
+        if: always()
+        run: |
+          echo "## 🧪 Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f test-output.txt ]; then
+            PASSED=$(grep -c 'Test.*passed' test-output.txt 2>/dev/null || echo "0")
+            FAILED=$(grep -c 'Test.*failed' test-output.txt 2>/dev/null || echo "0")
+            echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| ✅ Passed | $PASSED |" >> $GITHUB_STEP_SUMMARY
+            echo "| ❌ Failed | $FAILED |" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            if [ "$FAILED" -gt 0 ]; then
+              echo "> [!WARNING]" >> $GITHUB_STEP_SUMMARY
+              echo "> Some tests failed. Review the test output above." >> $GITHUB_STEP_SUMMARY
+            else
+              echo "> [!NOTE]" >> $GITHUB_STEP_SUMMARY
+              echo "> All tests passed successfully." >> $GITHUB_STEP_SUMMARY
+            fi
+          else
+            echo "⚠️ Test output file not found." >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Test with Thread Sanitizer
         run: swift test --sanitize=thread
@@ -112,6 +138,25 @@ jobs:
             exit 1
           else
             echo "✅ Coverage ${COVERAGE}% meets the ${COVERAGE_THRESHOLD}% threshold."
+          fi
+
+          # Write coverage badge to Job Summary
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## 📊 Code Coverage" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -n "$COVERAGE" ]; then
+            COVERAGE_INT=${COVERAGE%.*}
+            if [ "$COVERAGE_INT" -ge 90 ]; then
+              BADGE="🟢"
+            elif [ "$COVERAGE_INT" -ge 80 ]; then
+              BADGE="🟡"
+            else
+              BADGE="🔴"
+            fi
+            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+            echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+            echo "| $BADGE Coverage | **${COVERAGE}%** |" >> $GITHUB_STEP_SUMMARY
+            echo "| 📏 Threshold | ${COVERAGE_THRESHOLD}% |" >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Upload Coverage Artifact
