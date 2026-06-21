@@ -134,18 +134,44 @@ public struct SpatialEvent: Identifiable, Sendable, Hashable, Codable {
 
   /// Creates a new spatial event with an automatically generated UUID.
   ///
+  /// The ``score`` is initialised to `0` because ``HeuristicRouter`` assigns
+  /// the definitive score at ingestion time via ``withScore(_:)``. External
+  /// callers should **not** need to set a score — use the convenience factories
+  /// (e.g., ``SpatialEvent/gaze(at:)``, ``SpatialEvent/touch(at:)``) instead.
+  ///
   /// - Parameters:
   ///   - id: Defaults to a new `UUID()` if not provided.
   ///   - timestamp: Defaults to `Date()` (now) if not provided.
   ///   - kind: The event classification and spatial payload.
-  ///   - score: The heuristic score assigned by the router. Defaults to `0`
-  ///     because ``HeuristicRouter`` overwrites this value at ingestion time.
-  ///     External callers should typically omit this parameter.
   public init(
     id: UUID = UUID(),
     timestamp: Date = Date(),
+    kind: SpatialEventKind
+  ) {
+    self.id = id
+    self.timestamp = timestamp
+    self.kind = kind
+    self.score = 0
+  }
+
+  /// Internal initialiser with explicit score assignment.
+  ///
+  /// Used by:
+  /// - ``withScore(_:)`` — the primary score-setting mechanism
+  /// - ``HeuristicRouter`` — assigns scores at ingestion
+  /// - Test fixtures via `@testable import AuraKit`
+  /// - `Codable` synthesis — decoder requires all stored properties
+  ///
+  /// - Parameters:
+  ///   - id: The event's unique identifier.
+  ///   - timestamp: The event's wall-clock timestamp.
+  ///   - kind: The event classification and spatial payload.
+  ///   - score: The heuristic importance score.
+  internal init(
+    id: UUID = UUID(),
+    timestamp: Date = Date(),
     kind: SpatialEventKind,
-    score: Double = 0
+    score: Double
   ) {
     self.id = id
     self.timestamp = timestamp

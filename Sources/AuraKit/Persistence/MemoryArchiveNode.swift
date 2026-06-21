@@ -80,6 +80,13 @@ public final class MemoryArchiveNode {
   /// encoding/decoding transparently.
   public var sourceNodeIDsData: Data
 
+  /// In-memory cache for decoded source node IDs.
+  ///
+  /// Populated lazily on first access via ``decodedSourceNodeIDs``
+  /// and invalidated by ``updateSourceNodeIDs(_:)``. Not meaningful
+  /// as persisted data — serves purely as a runtime decode cache.
+  var _cachedSourceNodeIDs: [UUID]?
+
   // MARK: - Init
 
   /// Creates a new `MemoryArchiveNode` from an encrypted summary and source references.
@@ -119,26 +126,34 @@ extension MemoryArchiveNode {
 
   /// Decodes and returns the array of source ``RawMemoryNode`` UUIDs.
   ///
-  /// Decodes `sourceNodeIDsData` on every access to avoid maintaining mutable
-  /// transient state on the `@Model` class. The `JSONDecoder` allocation is
-  /// negligible (~2µs) and the trade-off favours thread-safety over micro-caching.
+  /// Uses a transient in-memory cache to avoid redundant `JSONDecoder`
+  /// allocations on repeated access. The cache is automatically invalidated
+  /// when ``updateSourceNodeIDs(_:)`` is called.
   ///
   /// Returns an empty array if decoding fails (should not occur under normal
   /// operation — indicates data corruption).
   public var decodedSourceNodeIDs: [UUID] {
-    (try? JSONDecoder().decode([UUID].self, from: sourceNodeIDsData)) ?? []
+    if let cached = _cachedSourceNodeIDs {
+      return cached
+    }
+    let decoded = (try? JSONDecoder().decode([UUID].self, from: sourceNodeIDsData)) ?? []
+    _cachedSourceNodeIDs = decoded
+    return decoded
   }
 
-  /// Updates the stored source node IDs.
+  /// Updates the stored source node IDs and invalidates the transient cache.
   ///
   /// - Parameter ids: The new array of source `RawMemoryNode` UUIDs.
   public func updateSourceNodeIDs(_ ids: [UUID]) {
     do {
       self.sourceNodeIDsData = try JSONEncoder().encode(ids)
+      self._cachedSourceNodeIDs = ids
     } catch {
       MemoryArchiveNodeLog.logger.error(
         "[AuraKit] MemoryArchiveNode: Failed to encode updated sourceNodeIDs — \(error.localizedDescription)."
       )
+      self._cachedSourceNodeIDs = nil
     }
   }
 }
+

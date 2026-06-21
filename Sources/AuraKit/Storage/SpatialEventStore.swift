@@ -61,15 +61,21 @@ public protocol SpatialEventStore: Actor {
   ///   which can cause significant memory pressure and latency with large
   ///   datasets (1,000+ events).
   ///
-  ///   **Production recommendation:** Prefer these safer alternatives:
-  ///   - ``events(limit:offset:)`` — paginated access with bounded memory
-  ///   - ``EncryptedMemoryStore/eventStream(limit:offset:batchSize:)`` —
-  ///     truly lazy streaming with O(batchSize) peak memory
-  ///   - ``EncryptedMemoryStore/allEventsIfSmallDataset(threshold:)`` —
-  ///     safe-guard wrapper that throws if the store exceeds a threshold
+  ///   ## ⚠️ Deprecation Path
   ///
-  ///   Reserve `allEvents()` for debugging, testing, and datasets that are
-  ///   **known** to be small (< 1,000 events).
+  ///   `allEvents()` will be deprecated in a future AuraKit release.
+  ///   Migrate to one of the bounded alternatives below **now** to avoid
+  ///   a forced migration later.
+  ///
+  ///   ## Choosing the Right API
+  ///
+  ///   | Use Case                        | Recommended API                         |
+  ///   |---------------------------------|-----------------------------------------|
+  ///   | Known-small dataset (\< 1,000)   | ``allEvents()``                         |
+  ///   | Production with unknown size    | ``events(limit:offset:)``               |
+  ///   | Large dataset streaming          | `eventStream(limit:offset:batchSize:)`  |
+  ///   | Safety-critical code paths       | `allEventsIfSmallDataset(threshold:)`   |
+  ///   | Unit tests / debugging           | ``allEvents()``                         |
   func allEvents() async -> [SpatialEvent]
 
   /// Returns a paginated slice of stored events in chronological order.
