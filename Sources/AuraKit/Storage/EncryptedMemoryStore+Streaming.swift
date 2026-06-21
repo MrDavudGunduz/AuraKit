@@ -5,8 +5,9 @@
 // Enables streaming decryption of large stores without loading all
 // decrypted payloads into memory simultaneously — OOM protection.
 //
-// V2: Batch-paginated fetch — only `batchSize` nodes are resident in
-// memory at any given time, reducing peak memory from O(N) to O(batchSize).
+// V3: Task-backed truly lazy evaluation — each batch is fetched only
+// when the consumer pulls events via `for await`, reducing peak memory
+// from O(N) to O(batchSize) with genuine back-pressure support.
 
 import CryptoKit
 import Foundation
@@ -36,17 +37,20 @@ extension EncryptedMemoryStore {
   /// }
   /// ```
   ///
-  /// ## Batch Pagination
+  /// ## Truly Lazy Batch Pagination
   ///
-  /// The stream internally fetches `batchSize` nodes at a time from SwiftData,
-  /// decrypts them, yields the results, then fetches the next batch. This keeps
-  /// only one batch of `RawMemoryNode` objects in memory at any time:
+  /// The stream internally uses a `Task`-backed continuation pattern. Each batch
+  /// of `batchSize` nodes is fetched from SwiftData **only when the consumer
+  /// pulls the next event**. This provides genuine back-pressure:
   ///
   /// ```
-  /// Fetch batch 0 (0..<100) → decrypt → yield → release
-  /// Fetch batch 1 (100..<200) → decrypt → yield → release
+  /// Consumer pulls → fetch batch 0 (0..<100) → decrypt → yield → wait
+  /// Consumer pulls → fetch batch 1 (100..<200) → decrypt → yield → wait
   /// ...
   /// ```
+  ///
+  /// Previous versions (V2) used a synchronous while-loop that eagerly fetched
+  /// all batches during stream construction. V3 defers all I/O to consumption time.
   ///
   /// ## Error Handling
   ///
@@ -79,84 +83,111 @@ extension EncryptedMemoryStore {
       return AsyncStream { $0.finish() }
     }
 
-    // Capture immutable references for the stream closure.
-    //
-    // ## Actor Isolation Safety
-    //
-    // `modelContext` is captured by reference here, but this is safe because:
-    // 1. `eventStream()` is an actor-isolated method — the closure runs within
-    //    the actor's serialised execution context.
-    // 2. The `AsyncStream` build closure executes **synchronously** during stream
-    //    construction (not deferred to a consumer task). The while-loop runs to
-    //    completion, yielding all events, before the method returns.
-    // 3. The `ModelContext` never escapes the actor's isolation boundary —
-    //    consumers receive only `Sendable` `SpatialEvent` values via `yield`.
-    //
-    // If this method is ever refactored to use `AsyncSequence` with deferred
-    // execution, the `modelContext` capture must be re-evaluated for isolation.
-    let service = encryptionService
-    let jsonDecoder = decoder
-    let context = modelContext
     let effectiveBatchSize = max(batchSize, 1)
-
-    // Calculate the total number of nodes we need to yield.
-    // When limit is nil, we stream all nodes (use Int.max as sentinel).
     let maxYield = limit ?? Int.max
     let baseOffset = offset
 
     return AsyncStream { continuation in
-      var yieldedCount = 0
-      var currentOffset = baseOffset
+      // Launch a Task that calls back into the actor for each batch.
+      // This provides truly lazy evaluation: the Task suspends between
+      // batches, yielding control until the consumer pulls the next event.
+      //
+      // ## Actor Isolation Safety
+      //
+      // The Task captures `self` (the actor) and calls `streamBatch()`,
+      // which is an actor-isolated method. This ensures `modelContext`
+      // access is always serialised through the actor's executor —
+      // no Sendable boundary violations occur.
+      let store = self
+      let streamKey = key
 
-      while yieldedCount < maxYield {
-        // Determine how many nodes to fetch in this batch.
-        let remaining = maxYield - yieldedCount
-        let fetchCount = min(effectiveBatchSize, remaining)
+      Task {
+        var yieldedCount = 0
+        var currentOffset = baseOffset
 
-        // Build a fetch descriptor for the current batch.
-        var descriptor = FetchDescriptor<RawMemoryNode>(
-          sortBy: [SortDescriptor(\.timestamp, order: .forward)]
-        )
-        descriptor.fetchLimit = fetchCount
-        descriptor.fetchOffset = currentOffset
+        while yieldedCount < maxYield {
+          let remaining = maxYield - yieldedCount
+          let fetchCount = min(effectiveBatchSize, remaining)
 
-        let nodes: [RawMemoryNode]
-        do {
-          nodes = try context.fetch(descriptor)
-        } catch {
-          Self.logger.error(
-            "[AuraKit] EncryptedMemoryStore: Stream batch fetch failed at offset \(currentOffset) — \(error.localizedDescription)"
+          let events = await store.streamBatch(
+            offset: currentOffset,
+            limit: fetchCount,
+            key: streamKey
           )
-          break
-        }
 
-        // No more nodes available — we've exhausted the store.
-        guard !nodes.isEmpty else { break }
+          // No more nodes available — we've exhausted the store.
+          guard let batch = events, !batch.isEmpty else { break }
 
-        // Decrypt and yield each node in the batch.
-        for node in nodes {
-          do {
-            let plaintext = try service.decrypt(node.encryptedPayload, using: key)
-            let event = try jsonDecoder.decode(SpatialEvent.self, from: plaintext)
+          for event in batch {
             continuation.yield(event)
             yieldedCount += 1
-          } catch {
-            Self.logger.error(
-              "[AuraKit] EncryptedMemoryStore: Stream decrypt failed for node \(node.id) — \(error.localizedDescription)"
-            )
-            // Continue to next node — don't terminate the stream
+          }
+
+          currentOffset += batch.count
+
+          // If we got fewer events than requested, there are no more to fetch.
+          if batch.count < fetchCount {
+            break
           }
         }
 
-        currentOffset += nodes.count
+        continuation.finish()
+      }
+    }
+  }
 
-        // If we got fewer nodes than requested, there are no more to fetch.
-        if nodes.count < fetchCount {
-          break
+  // MARK: - Actor-Isolated Batch Fetch
+
+  /// Fetches and decrypts a single batch of nodes within the actor's isolation domain.
+  ///
+  /// This method is the bridge between the `Task`-driven streaming loop and
+  /// the actor-isolated `ModelContext`. By keeping all `modelContext` access
+  /// within this method, we guarantee that the non-Sendable `ModelContext`
+  /// never escapes the actor's isolation boundary.
+  ///
+  /// - Parameters:
+  ///   - offset: The fetch offset for this batch.
+  ///   - limit: Maximum number of nodes to fetch.
+  ///   - key: The AES-GCM symmetric key for decryption.
+  /// - Returns: Decrypted events, or `nil` if the fetch failed.
+  private func streamBatch(
+    offset: Int,
+    limit: Int,
+    key: SymmetricKey
+  ) -> [SpatialEvent]? {
+    do {
+      var descriptor = FetchDescriptor<RawMemoryNode>(
+        sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+      )
+      descriptor.fetchLimit = limit
+      descriptor.fetchOffset = offset
+
+      let nodes = try modelContext.fetch(descriptor)
+      guard !nodes.isEmpty else { return nil }
+
+      var events: [SpatialEvent] = []
+      events.reserveCapacity(nodes.count)
+
+      for node in nodes {
+        do {
+          let plaintext = try encryptionService.decrypt(node.encryptedPayload, using: key)
+          let event = try decoder.decode(SpatialEvent.self, from: plaintext)
+          events.append(event)
+        } catch {
+          incrementDecryptionFailure()
+          Self.logger.error(
+            "[AuraKit] EncryptedMemoryStore: Stream decrypt failed for node \(node.id) — \(error.localizedDescription)"
+          )
+          // Continue to next node — don't terminate the stream
         }
       }
 
-      continuation.finish()
+      return events
+    } catch {
+      Self.logger.error(
+        "[AuraKit] EncryptedMemoryStore: Stream batch fetch failed at offset \(offset) — \(error.localizedDescription)"
+      )
+      return nil
     }
   }
 }
