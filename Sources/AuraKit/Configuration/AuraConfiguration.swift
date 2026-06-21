@@ -68,6 +68,16 @@ public struct AuraConfiguration: Sendable, Equatable {
   /// Set to `0` to disable the warning entirely.
   public static let defaultLargeDatasetWarningThreshold: Int = AuraKitConstants.defaultLargeDatasetWarningThreshold
 
+  /// Default number of `append()` calls before ``EncryptedMemoryStore`` issues
+  /// a `ModelContext.save()` to persist pending inserts.
+  ///
+  /// Write coalescing amortises SQLite I/O across multiple inserts. At 60fps
+  /// sensor input, a threshold of `10` reduces save calls from 60/sec to 6/sec
+  /// — a 10× reduction in disk I/O with minimal data loss window.
+  ///
+  /// Set to `1` to disable coalescing (save on every append — legacy behaviour).
+  public static let defaultSaveThreshold: Int = 10
+
   // MARK: - Properties
 
   /// Heuristic importance weight for high-signal interaction events.
@@ -112,6 +122,18 @@ public struct AuraConfiguration: Sendable, Equatable {
   /// Set to `0` to disable the warning. Defaults to `1_000`.
   public let largeDatasetWarningThreshold: Int
 
+  /// Number of `append()` calls before ``EncryptedMemoryStore`` persists
+  /// pending inserts to disk via `ModelContext.save()`.
+  ///
+  /// Write coalescing batches multiple inserts into a single save, reducing
+  /// SQLite write amplification on high-frequency capture paths. The pending
+  /// inserts are always flushed on ``EncryptedMemoryStore/flushPendingWrites()``,
+  /// ``batchAppend(_:)``, or pipeline shutdown.
+  ///
+  /// Must be a positive integer. Set to `1` to save on every append (disables
+  /// coalescing). Defaults to `10`.
+  public let saveThreshold: Int
+
   // MARK: - Init
 
   /// Creates a validated `AuraConfiguration`, throwing if any parameter is out of range.
@@ -131,7 +153,8 @@ public struct AuraConfiguration: Sendable, Equatable {
     bufferCapacity: Int = defaultBufferCapacity,
     storeCapacity: Int = defaultStoreCapacity,
     streamBatchSize: Int = defaultStreamBatchSize,
-    largeDatasetWarningThreshold: Int = defaultLargeDatasetWarningThreshold
+    largeDatasetWarningThreshold: Int = defaultLargeDatasetWarningThreshold,
+    saveThreshold: Int = defaultSaveThreshold
   ) throws {
     guard (0.0...1.0).contains(interactionWeight) else {
       throw AuraError.invalidConfiguration(
@@ -163,12 +186,18 @@ public struct AuraConfiguration: Sendable, Equatable {
         reason: "largeDatasetWarningThreshold must be >= 0, got \(largeDatasetWarningThreshold)"
       )
     }
+    guard saveThreshold > 0 else {
+      throw AuraError.invalidConfiguration(
+        reason: "saveThreshold must be > 0, got \(saveThreshold)"
+      )
+    }
     self.interactionWeight = interactionWeight
     self.gazeWeight = gazeWeight
     self.bufferCapacity = bufferCapacity
     self.storeCapacity = storeCapacity
     self.streamBatchSize = streamBatchSize
     self.largeDatasetWarningThreshold = largeDatasetWarningThreshold
+    self.saveThreshold = saveThreshold
   }
 
   /// Private unchecked initialiser for known-valid constant values only.
@@ -180,7 +209,8 @@ public struct AuraConfiguration: Sendable, Equatable {
     bufferCapacity: Int,
     storeCapacity: Int,
     streamBatchSize: Int,
-    largeDatasetWarningThreshold: Int
+    largeDatasetWarningThreshold: Int,
+    saveThreshold: Int
   ) {
     self.interactionWeight = interactionWeight
     self.gazeWeight = gazeWeight
@@ -188,6 +218,7 @@ public struct AuraConfiguration: Sendable, Equatable {
     self.storeCapacity = storeCapacity
     self.streamBatchSize = streamBatchSize
     self.largeDatasetWarningThreshold = largeDatasetWarningThreshold
+    self.saveThreshold = saveThreshold
   }
 }
 
@@ -203,12 +234,14 @@ extension AuraConfiguration {
   /// - `storeCapacity`: `10_000`
   /// - `streamBatchSize`: `100`
   /// - `largeDatasetWarningThreshold`: `1_000`
+  /// - `saveThreshold`: `10`
   public static let `default` = AuraConfiguration(
     uncheckedInteractionWeight: defaultInteractionWeight,
     gazeWeight: defaultGazeWeight,
     bufferCapacity: defaultBufferCapacity,
     storeCapacity: defaultStoreCapacity,
     streamBatchSize: defaultStreamBatchSize,
-    largeDatasetWarningThreshold: defaultLargeDatasetWarningThreshold
+    largeDatasetWarningThreshold: defaultLargeDatasetWarningThreshold,
+    saveThreshold: defaultSaveThreshold
   )
 }

@@ -64,6 +64,16 @@ public actor EncryptedMemoryStore: SpatialEventStore {
   /// emit a runtime `Logger.warning`. Set to `0` to disable.
   let largeDatasetWarningThreshold: Int
 
+  /// Number of `append()` calls before a `ModelContext.save()` is issued.
+  ///
+  /// Write coalescing reduces SQLite I/O by batching inserts. When
+  /// `pendingInsertCount` reaches this threshold, all pending inserts are
+  /// persisted in a single save. Set to `1` to disable coalescing.
+  let saveThreshold: Int
+
+  /// Count of inserts pending commit. Reset to `0` after each `save()`.
+  var pendingInsertCount: Int = 0
+
   /// JSON encoder used to serialise `SpatialEvent` before encryption.
   let encoder = JSONEncoder()
 
@@ -127,11 +137,15 @@ public actor EncryptedMemoryStore: SpatialEventStore {
   ///     Defaults to a new instance.
   ///   - largeDatasetWarningThreshold: Node count at which ``allEvents()``
   ///     emits a runtime warning. Pass `0` to disable. Defaults to `1_000`.
+  ///   - saveThreshold: Number of `append()` calls before persisting to disk.
+  ///     Defaults to ``AuraConfiguration/defaultSaveThreshold`` (`10`).
+  ///     Set to `1` to save on every append (legacy behaviour).
   public init(
     container: ModelContainer,
     keyManager: KeyManager = KeyManager(),
     encryptionService: EncryptionService = EncryptionService(),
-    largeDatasetWarningThreshold: Int = AuraConfiguration.defaultLargeDatasetWarningThreshold
+    largeDatasetWarningThreshold: Int = AuraConfiguration.defaultLargeDatasetWarningThreshold,
+    saveThreshold: Int = AuraConfiguration.defaultSaveThreshold
   ) {
     self.modelContext = ModelContext(container)
     // Explicit save() calls control write timing — disable autosave
@@ -140,6 +154,7 @@ public actor EncryptedMemoryStore: SpatialEventStore {
     self.keyManager = keyManager
     self.encryptionService = encryptionService
     self.largeDatasetWarningThreshold = largeDatasetWarningThreshold
+    self.saveThreshold = max(saveThreshold, 1)
 
     // Set up the dropped event notification stream.
     var continuation: AsyncStream<DroppedEvent>.Continuation!
@@ -203,23 +218,32 @@ public actor EncryptedMemoryStore: SpatialEventStore {
       )
 
       modelContext.insert(node)
+      pendingInsertCount += 1
 
-      do {
-        try modelContext.save()
-        _totalEventsWritten += 1
-      } catch {
-        // Rollback the unsaved insert to prevent dirty state accumulation.
-        // Without rollback, the failed node remains in the context and could
-        // cause duplicate writes or constraint violations on the next save.
-        modelContext.rollback()
-        _droppedEventCount += 1
-        _dropContinuation.yield(DroppedEvent(
-          eventID: event.id,
-          reason: "Context save failed: \(error.localizedDescription)"
-        ))
-        Self.logger.error(
-          "[AuraKit] EncryptedMemoryStore: Failed to save context — \(error.localizedDescription). Context rolled back."
-        )
+      // Write coalescing: only persist to disk when the pending insert
+      // count reaches the configured threshold. This amortises SQLite
+      // write overhead across multiple inserts. Call `flushPendingWrites()`
+      // to force an immediate persist at any time.
+      if pendingInsertCount >= saveThreshold {
+        do {
+          try modelContext.save()
+          _totalEventsWritten += pendingInsertCount
+          pendingInsertCount = 0
+        } catch {
+          // Rollback the unsaved inserts to prevent dirty state accumulation.
+          // Without rollback, the failed nodes remain in the context and could
+          // cause duplicate writes or constraint violations on the next save.
+          modelContext.rollback()
+          _droppedEventCount += pendingInsertCount
+          pendingInsertCount = 0
+          _dropContinuation.yield(DroppedEvent(
+            eventID: event.id,
+            reason: "Context save failed: \(error.localizedDescription)"
+          ))
+          Self.logger.error(
+            "[AuraKit] EncryptedMemoryStore: Failed to save context — \(error.localizedDescription). Context rolled back."
+          )
+        }
       }
     } catch {
       _droppedEventCount += 1

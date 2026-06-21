@@ -330,11 +330,63 @@ extension EncryptedMemoryStore {
     }
   }
 
+  /// Persists all pending coalesced inserts immediately.
+  ///
+  /// When write coalescing is enabled (``saveThreshold`` > 1), `append()` calls
+  /// insert nodes into the `ModelContext` but defer the `save()` until the
+  /// threshold is reached. Call this method to force an immediate commit of
+  /// all pending inserts — for example, before pipeline shutdown, before reads
+  /// that must see the latest writes, or at app lifecycle boundaries.
+  ///
+  /// This method is a no-op if there are no pending inserts.
+  ///
+  /// ## Usage
+  ///
+  /// ```swift
+  /// // Before reading recently appended events:
+  /// await store.flushPendingWrites()
+  /// let events = await store.allEvents()
+  ///
+  /// // In shutdown flow:
+  /// await store.flushPendingWrites()
+  /// ```
+  ///
+  /// - Note: ``batchAppend(_:)`` always issues its own `save()` regardless
+  ///   of the coalescing threshold — calling `flushPendingWrites()` after
+  ///   a batch append is unnecessary.
+  public func flushPendingWrites() {
+    guard pendingInsertCount > 0 else { return }
+
+    do {
+      try modelContext.save()
+      _totalEventsWritten += pendingInsertCount
+      Self.logger.debug(
+        "[AuraKit] EncryptedMemoryStore: Flushed \(self.pendingInsertCount) pending inserts."
+      )
+      pendingInsertCount = 0
+    } catch {
+      modelContext.rollback()
+      _droppedEventCount += pendingInsertCount
+      _dropContinuation.yield(DroppedEvent(
+        reason: "Flush save failed (\(pendingInsertCount) events): \(error.localizedDescription)"
+      ))
+      Self.logger.error(
+        "[AuraKit] EncryptedMemoryStore: flushPendingWrites() failed — \(error.localizedDescription). Context rolled back."
+      )
+      pendingInsertCount = 0
+    }
+  }
+
   /// Removes all memory nodes from the store.
+  ///
+  /// Any pending coalesced inserts are discarded (not flushed) before deletion.
   ///
   /// - Warning: This is a destructive, irreversible operation.
   ///   Primarily intended for test teardown and development resets.
   public func clear() async {
+    // Discard any pending coalesced inserts — they would be deleted anyway.
+    pendingInsertCount = 0
+
     do {
       try modelContext.delete(model: RawMemoryNode.self)
       try modelContext.delete(model: MemoryArchiveNode.self)
