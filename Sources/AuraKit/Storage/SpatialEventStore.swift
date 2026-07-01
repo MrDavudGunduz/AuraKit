@@ -92,6 +92,19 @@ public protocol SpatialEventStore: Actor {
 
   /// The total number of events currently in the store.
   var count: Int { get async }
+
+  /// Flushes any pending writes that have been coalesced but not yet persisted.
+  ///
+  /// For stores with write coalescing (e.g., ``EncryptedMemoryStore`` with
+  /// ``saveThreshold`` > 1), `append()` may defer persistence until a threshold
+  /// is reached. This method forces an immediate commit of all pending inserts.
+  ///
+  /// Call this during pipeline shutdown, before reads that must see the latest
+  /// writes, or at app lifecycle boundaries.
+  ///
+  /// The default implementation is a no-op — stores without write coalescing
+  /// (e.g., ``MemoryStore``) do not need to override this.
+  func flushPendingWrites() async
 }
 
 // MARK: - Default Implementations
@@ -119,4 +132,7 @@ extension SpatialEventStore {
     let end = min(offset + limit, all.count)
     return Array(all[offset..<end])
   }
+
+  /// Default no-op implementation for stores that do not use write coalescing.
+  public func flushPendingWrites() async {}
 }

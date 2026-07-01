@@ -354,7 +354,7 @@ extension EncryptedMemoryStore {
   /// - Note: ``batchAppend(_:)`` always issues its own `save()` regardless
   ///   of the coalescing threshold — calling `flushPendingWrites()` after
   ///   a batch append is unnecessary.
-  public func flushPendingWrites() {
+  public func flushPendingWrites() async {
     guard pendingInsertCount > 0 else { return }
 
     do {

@@ -202,14 +202,24 @@ public actor CaptureActor {
   /// pipeline teardown or graceful shutdown.
   ///
   /// Events are written as a single batch via ``SpatialEventStore/batchAppend(_:)``,
-  /// minimising I/O operations.
+  /// minimising I/O operations. After the batch write, any pending coalesced
+  /// inserts from prior individual `append()` calls are also flushed via
+  /// ``SpatialEventStore/flushPendingWrites()`` — guaranteeing zero data loss.
   ///
   /// - Returns: The number of events flushed to the store.
   @discardableResult
   public func flushToStore() async -> Int {
     let events = buffer.drainAll()
-    guard !events.isEmpty else { return 0 }
-    await store.batchAppend(events)
+    if !events.isEmpty {
+      await store.batchAppend(events)
+    }
+
+    // Flush any coalesced writes from prior individual append() calls.
+    // Without this, the last (saveThreshold - 1) events could be lost
+    // during pipeline teardown when using EncryptedMemoryStore with
+    // write coalescing enabled.
+    await store.flushPendingWrites()
+
     return events.count
   }
 }
