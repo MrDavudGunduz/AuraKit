@@ -85,6 +85,13 @@ public final class MemoryArchiveNode {
   /// Populated lazily on first access via ``decodedSourceNodeIDs``
   /// and invalidated by ``updateSourceNodeIDs(_:)``. Not meaningful
   /// as persisted data — serves purely as a runtime decode cache.
+  ///
+  /// Marked `@Transient` to prevent SwiftData from persisting this
+  /// runtime-only cache to the database. Without this annotation,
+  /// SwiftData would create an unnecessary column and include the
+  /// cache in every save/fetch cycle — wasting I/O and creating
+  /// a schema migration liability.
+  @Transient
   var _cachedSourceNodeIDs: [UUID]?
 
   // MARK: - Init
