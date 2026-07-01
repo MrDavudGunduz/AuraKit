@@ -19,7 +19,16 @@ extension KeyManager {
   /// This is the top-level derivation entry point called by ``symmetricKey()``.
   /// It retrieves (or generates) the HKDF salt, then delegates to the
   /// platform-appropriate derivation method.
+  ///
+  /// ## Performance Telemetry
+  ///
+  /// This method is instrumented with `os_signpost` via ``SignpostLogger``.
+  /// The key derivation interval (~2–5ms on physical devices) is visible in
+  /// **Instruments → Time Profiler** under the `KeyDerivation` signpost name.
   func deriveKey() throws -> SymmetricKey {
+    let signpostID = SignpostLogger.beginKeyDerivation()
+    defer { SignpostLogger.endKeyDerivation(signpostID) }
+
     let salt = try retrieveOrGenerateSalt()
     return try deriveKeyWithSalt(salt)
   }
