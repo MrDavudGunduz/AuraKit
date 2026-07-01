@@ -110,6 +110,9 @@ identifier_name:
     - _droppedEventCount
     - _decryptionFailureCount
     - _totalEventsWritten
+    - _retryQueue
+    - _cachedSourceNodeIDs
+    - _dropContinuation
 
 # ─── Custom Rules ──────────────────────────────────────────────────────────────
 custom_rules:

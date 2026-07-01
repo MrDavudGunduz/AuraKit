@@ -78,6 +78,16 @@ public struct AuraConfiguration: Sendable, Equatable {
   /// Set to `1` to disable coalescing (save on every append — legacy behaviour).
   public static let defaultSaveThreshold: Int = 10
 
+  /// Default maximum number of events that ``EncryptedMemoryStore`` will hold
+  /// in its retry queue when `append()` encounters a transient failure.
+  ///
+  /// Events in the retry queue are re-attempted on the next successful `append()`
+  /// or when ``EncryptedMemoryStore/flushRetryQueue()`` is called explicitly.
+  /// When the queue is at capacity, the oldest queued event is permanently dropped.
+  ///
+  /// Set to `0` to disable retry entirely (legacy behaviour — immediate drop).
+  public static let defaultRetryQueueCapacity: Int = 10
+
   // MARK: - Properties
 
   /// Heuristic importance weight for high-signal interaction events.
@@ -134,6 +144,16 @@ public struct AuraConfiguration: Sendable, Equatable {
   /// coalescing). Defaults to `10`.
   public let saveThreshold: Int
 
+  /// Maximum number of events held in ``EncryptedMemoryStore``'s retry queue.
+  ///
+  /// When `append()` encounters a transient failure (key retrieval, encryption,
+  /// or save error), the event is placed in a retry queue instead of being
+  /// permanently dropped. Queued events are retried on the next `append()`.
+  ///
+  /// Set to `0` to disable retry (immediate drop on failure — legacy behaviour).
+  /// Defaults to `10`.
+  public let retryQueueCapacity: Int
+
   // MARK: - Init
 
   /// Creates a validated `AuraConfiguration`, throwing if any parameter is out of range.
@@ -154,7 +174,8 @@ public struct AuraConfiguration: Sendable, Equatable {
     storeCapacity: Int = defaultStoreCapacity,
     streamBatchSize: Int = defaultStreamBatchSize,
     largeDatasetWarningThreshold: Int = defaultLargeDatasetWarningThreshold,
-    saveThreshold: Int = defaultSaveThreshold
+    saveThreshold: Int = defaultSaveThreshold,
+    retryQueueCapacity: Int = defaultRetryQueueCapacity
   ) throws {
     guard (0.0...1.0).contains(interactionWeight) else {
       throw AuraError.invalidConfiguration(
@@ -191,6 +212,11 @@ public struct AuraConfiguration: Sendable, Equatable {
         reason: "saveThreshold must be > 0, got \(saveThreshold)"
       )
     }
+    guard retryQueueCapacity >= 0 else {
+      throw AuraError.invalidConfiguration(
+        reason: "retryQueueCapacity must be >= 0, got \(retryQueueCapacity)"
+      )
+    }
     self.interactionWeight = interactionWeight
     self.gazeWeight = gazeWeight
     self.bufferCapacity = bufferCapacity
@@ -198,6 +224,7 @@ public struct AuraConfiguration: Sendable, Equatable {
     self.streamBatchSize = streamBatchSize
     self.largeDatasetWarningThreshold = largeDatasetWarningThreshold
     self.saveThreshold = saveThreshold
+    self.retryQueueCapacity = retryQueueCapacity
   }
 
   /// Private unchecked initialiser for known-valid constant values only.
@@ -210,7 +237,8 @@ public struct AuraConfiguration: Sendable, Equatable {
     storeCapacity: Int,
     streamBatchSize: Int,
     largeDatasetWarningThreshold: Int,
-    saveThreshold: Int
+    saveThreshold: Int,
+    retryQueueCapacity: Int
   ) {
     self.interactionWeight = interactionWeight
     self.gazeWeight = gazeWeight
@@ -219,6 +247,7 @@ public struct AuraConfiguration: Sendable, Equatable {
     self.streamBatchSize = streamBatchSize
     self.largeDatasetWarningThreshold = largeDatasetWarningThreshold
     self.saveThreshold = saveThreshold
+    self.retryQueueCapacity = retryQueueCapacity
   }
 }
 
@@ -242,6 +271,7 @@ extension AuraConfiguration {
     storeCapacity: defaultStoreCapacity,
     streamBatchSize: defaultStreamBatchSize,
     largeDatasetWarningThreshold: defaultLargeDatasetWarningThreshold,
-    saveThreshold: defaultSaveThreshold
+    saveThreshold: defaultSaveThreshold,
+    retryQueueCapacity: defaultRetryQueueCapacity
   )
 }

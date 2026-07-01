@@ -62,14 +62,14 @@ public actor EncryptedMemoryStore: SpatialEventStore {
 
   /// Node count threshold at which ``allEvents()`` and ``recallAndFetchAll()``
   /// emit a runtime `Logger.warning`. Set to `0` to disable.
-  let largeDatasetWarningThreshold: Int
+  nonisolated let largeDatasetWarningThreshold: Int
 
   /// Number of `append()` calls before a `ModelContext.save()` is issued.
   ///
   /// Write coalescing reduces SQLite I/O by batching inserts. When
   /// `pendingInsertCount` reaches this threshold, all pending inserts are
   /// persisted in a single save. Set to `1` to disable coalescing.
-  let saveThreshold: Int
+  nonisolated let saveThreshold: Int
 
   /// Count of inserts pending commit. Reset to `0` after each `save()`.
   var pendingInsertCount: Int = 0
@@ -97,10 +97,24 @@ public actor EncryptedMemoryStore: SpatialEventStore {
   /// Cumulative count of events successfully written to the store.
   var _totalEventsWritten: Int = 0
 
+  /// Bounded queue for events that failed to persist on the first attempt.
+  ///
+  /// Events are added to this queue when `append()` encounters a transient
+  /// failure (key retrieval, encryption, or save). They are retried on the
+  /// next successful `append()` call or when `flushRetryQueue()` is called.
+  ///
+  /// The queue capacity is configured by ``retryQueueCapacity``. When full,
+  /// the oldest queued event is permanently dropped to make room.
+  var _retryQueue: [SpatialEvent] = []
+
+  /// Maximum number of events that can be held in the retry queue.
+  /// Configured at init time. `0` disables retry entirely.
+  nonisolated let retryQueueCapacity: Int
+
   /// Continuation for the dropped event notification stream.
   /// Retained for the lifetime of the actor; yields a ``DroppedEvent``
   /// each time an event fails to persist.
-  private let _dropContinuation: AsyncStream<DroppedEvent>.Continuation
+  let _dropContinuation: AsyncStream<DroppedEvent>.Continuation
 
   /// An `AsyncStream` that emits a ``DroppedEvent`` each time an event fails
   /// to persist due to key retrieval, encryption, or save failure.
@@ -145,7 +159,8 @@ public actor EncryptedMemoryStore: SpatialEventStore {
     keyManager: KeyManager = KeyManager(),
     encryptionService: EncryptionService = EncryptionService(),
     largeDatasetWarningThreshold: Int = AuraConfiguration.defaultLargeDatasetWarningThreshold,
-    saveThreshold: Int = AuraConfiguration.defaultSaveThreshold
+    saveThreshold: Int = AuraConfiguration.defaultSaveThreshold,
+    retryQueueCapacity: Int = AuraConfiguration.defaultRetryQueueCapacity
   ) {
     self.modelContext = ModelContext(container)
     // Explicit save() calls control write timing — disable autosave
@@ -155,6 +170,7 @@ public actor EncryptedMemoryStore: SpatialEventStore {
     self.encryptionService = encryptionService
     self.largeDatasetWarningThreshold = largeDatasetWarningThreshold
     self.saveThreshold = max(saveThreshold, 1)
+    self.retryQueueCapacity = max(retryQueueCapacity, 0)
 
     // Set up the dropped event notification stream.
     var continuation: AsyncStream<DroppedEvent>.Continuation!
@@ -190,6 +206,12 @@ public actor EncryptedMemoryStore: SpatialEventStore {
   /// `successRate = totalEventsWritten / (totalEventsWritten + droppedEventCount)`
   public var totalEventsWritten: Int { _totalEventsWritten }
 
+  /// The number of events currently held in the retry queue awaiting re-attempt.
+  ///
+  /// A persistently non-zero value indicates ongoing transient failures
+  /// (e.g., Secure Enclave unavailability, disk I/O contention).
+  public var retryQueueCount: Int { _retryQueue.count }
+
   // MARK: - SpatialEventStore Conformance
 
   /// Encrypts and persists a ``SpatialEvent`` as a ``RawMemoryNode``.
@@ -199,62 +221,12 @@ public actor EncryptedMemoryStore: SpatialEventStore {
   ///
   /// - Parameter event: The spatial event to persist.
   public func append(_ event: SpatialEvent) async {
-    let signpostID = SignpostLogger.beginEncrypt()
-    defer { SignpostLogger.endEncrypt(signpostID) }
+    // Drain retry queue before processing the new event.
+    // This ensures previously failed events get a second chance
+    // whenever the pipeline is healthy enough to accept new events.
+    await drainRetryQueue()
 
-    do {
-      let key = try await keyManager.symmetricKey()
-      let currentKeyVersion = await keyManager.keyVersion
-      let plaintext = try encoder.encode(event)
-      let ciphertext = try encryptionService.encrypt(plaintext, using: key)
-
-      let node = RawMemoryNode(
-        id: event.id,
-        encryptedPayload: ciphertext,
-        score: event.score,
-        timestamp: event.timestamp,
-        eventType: event.kind.eventType,
-        keyVersion: currentKeyVersion
-      )
-
-      modelContext.insert(node)
-      pendingInsertCount += 1
-
-      // Write coalescing: only persist to disk when the pending insert
-      // count reaches the configured threshold. This amortises SQLite
-      // write overhead across multiple inserts. Call `flushPendingWrites()`
-      // to force an immediate persist at any time.
-      if pendingInsertCount >= saveThreshold {
-        do {
-          try modelContext.save()
-          _totalEventsWritten += pendingInsertCount
-          pendingInsertCount = 0
-        } catch {
-          // Rollback the unsaved inserts to prevent dirty state accumulation.
-          // Without rollback, the failed nodes remain in the context and could
-          // cause duplicate writes or constraint violations on the next save.
-          modelContext.rollback()
-          _droppedEventCount += pendingInsertCount
-          pendingInsertCount = 0
-          _dropContinuation.yield(DroppedEvent(
-            eventID: event.id,
-            reason: "Context save failed: \(error.localizedDescription)"
-          ))
-          Self.logger.error(
-            "[AuraKit] EncryptedMemoryStore: Failed to save context — \(error.localizedDescription). Context rolled back."
-          )
-        }
-      }
-    } catch {
-      _droppedEventCount += 1
-      _dropContinuation.yield(DroppedEvent(
-        eventID: event.id,
-        reason: "Encryption failed: \(error.localizedDescription)"
-      ))
-      Self.logger.error(
-        "[AuraKit] EncryptedMemoryStore: Encryption failed for event \(event.id) — \(error.localizedDescription)"
-      )
-    }
+    await appendInternal(event)
   }
 
   /// Encrypts and persists multiple events in a single batch operation.
