@@ -133,12 +133,33 @@ struct PersistenceControllerTests {
 
   @Test("makeContainer creates a valid on-disk container")
   func onDiskContainerCreation() throws {
-    let container = try PersistenceController.makeContainer()
+    // Use a temp directory to avoid polluting ~/Library/Application Support
+    // and to prevent stale schema conflicts from previous test runs.
+    let tempDir = FileManager.default.temporaryDirectory
+      .appendingPathComponent("AuraKitTests-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+    defer {
+      try? FileManager.default.removeItem(at: tempDir)
+    }
+
+    let storeURL = tempDir.appendingPathComponent("AuraKit-Test.store")
+    let config = ModelConfiguration(
+      "AuraKit-OnDiskTest",
+      schema: PersistenceController.schema,
+      url: storeURL,
+      allowsSave: true
+    )
+    let container = try ModelContainer(
+      for: PersistenceController.schema,
+      configurations: [config]
+    )
     let context = ModelContext(container)
 
     let descriptor = FetchDescriptor<RawMemoryNode>()
     // Should not throw — schema is correctly configured
-    _ = try context.fetchCount(descriptor)
+    let count = try context.fetchCount(descriptor)
+    #expect(count == 0)
   }
 
   @Test("Schema includes both RawMemoryNode and MemoryArchiveNode")

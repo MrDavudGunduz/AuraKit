@@ -102,7 +102,7 @@ import os.log
 // - ``MemoryArchiveNode``
 // - ``PersistenceController``
 // - ``SpatialEventType``
-// - ``AuraKitSchemaV1``
+// - ``AuraKitSchemaV2``
 // - ``AuraKitMigrationPlan``
 //
 // ### Security

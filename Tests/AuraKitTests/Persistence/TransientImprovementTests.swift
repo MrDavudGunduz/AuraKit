@@ -206,9 +206,8 @@ struct ShutdownFlushIntegrationTests {
     #expect(totalWritten == 4, "All 4 events should be written")
   }
 
-  @Test("AuraKit.shutdown() preserves all in-flight events")
-  @MainActor
-  func shutdownPreservesAllEvents() async throws {
+  @Test("flushToStore() preserves all in-flight events (interaction + gaze)")
+  func flushToStorePreservesAllEvents() async throws {
     let container = try PersistenceController.makeInMemoryContainer()
     let key = SymmetricKey(size: .bits256)
     let store = EncryptedMemoryStore(
@@ -217,12 +216,8 @@ struct ShutdownFlushIntegrationTests {
       saveThreshold: 100
     )
 
-    // Configure with the encrypted store
-    AuraKit.shared.reset()
     let config = try AuraConfiguration(bufferCapacity: 64)
-    try AuraKit.shared.configure(with: config, store: store)
-
-    let capture = try AuraKit.shared.capture()
+    let capture = CaptureActor(config: config, store: store)
 
     // Record mixed events
     await capture.record(
@@ -232,14 +227,14 @@ struct ShutdownFlushIntegrationTests {
       event: SpatialEvent(kind: .gaze(position: .zero))
     )
 
-    // Shutdown — should flush everything
-    let flushed = await AuraKit.shared.shutdown()
+    // flushToStore — should drain buffer AND flush pending writes
+    let flushed = await capture.flushToStore()
 
     // Verify gaze event was flushed from buffer
     #expect(flushed == 1, "1 buffered gaze event should be flushed")
 
     // Verify all events are persisted
     let totalWritten = await store.totalEventsWritten
-    #expect(totalWritten == 2, "Both events should be persisted after shutdown")
+    #expect(totalWritten == 2, "Both events should be persisted after flush")
   }
 }

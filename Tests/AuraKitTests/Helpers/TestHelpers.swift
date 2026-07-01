@@ -85,11 +85,13 @@ let sharedTestKey = SymmetricKey(size: .bits256)
 /// duplicated across `EncryptedMemoryStoreTests`, `ZeroTrustTests`,
 /// and `Phase2HardeningTests`.
 func makeTestEncryptedStore(
-  key: SymmetricKey = sharedTestKey
+  key: SymmetricKey = sharedTestKey,
+  saveThreshold: Int = 1
 ) throws -> EncryptedMemoryStore {
   let container = try PersistenceController.makeInMemoryContainer()
   return EncryptedMemoryStore(
     container: container,
-    keyManager: KeyManager(staticKey: key)
+    keyManager: KeyManager(staticKey: key),
+    saveThreshold: saveThreshold
   )
 }

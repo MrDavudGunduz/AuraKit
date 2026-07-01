@@ -212,18 +212,18 @@ struct CloudKitE2EETests {
   /// Validates the schema versioning is correctly configured for migration.
   @Test("Schema versioning configured for forward-compatible migrations")
   func schemaVersioningConfigured() {
-    // V1 schema
-    #expect(AuraKitSchemaV1.versionIdentifier == Schema.Version(1, 0, 0))
+    // Current schema (V2)
+    #expect(AuraKitSchemaV2.versionIdentifier == Schema.Version(2, 0, 0))
 
-    let models = AuraKitSchemaV1.models
+    let models = AuraKitSchemaV2.models
     #expect(models.count == 2)
 
-    // Migration plan
+    // Migration plan — single schema, no stages
     let schemas = AuraKitMigrationPlan.schemas
-    #expect(schemas.count == 1) // V1 only for now
+    #expect(schemas.count == 1, "Single current schema version")
 
     let stages = AuraKitMigrationPlan.stages
-    #expect(stages.isEmpty, "No migration stages needed for V1-only schema")
+    #expect(stages.isEmpty, "No migration stages needed for single-version schema")
   }
 
   /// Validates that the PersistenceController.schema includes both model types

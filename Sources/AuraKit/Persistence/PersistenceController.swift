@@ -85,7 +85,6 @@ public struct PersistenceController: Sendable {
 
     let container = try ModelContainer(
       for: schema,
-      migrationPlan: AuraKitMigrationPlan.self,
       configurations: [configuration]
     )
 
@@ -108,7 +107,7 @@ public struct PersistenceController: Sendable {
   /// - Throws: If the container cannot be created.
   public static func makeInMemoryContainer() throws -> ModelContainer {
     let configuration = ModelConfiguration(
-      "AuraKit-InMemory",
+      "AuraKit-InMemory-\(UUID().uuidString)",
       schema: schema,
       isStoredInMemoryOnly: true,
       allowsSave: true
@@ -116,7 +115,6 @@ public struct PersistenceController: Sendable {
 
     let container = try ModelContainer(
       for: schema,
-      migrationPlan: AuraKitMigrationPlan.self,
       configurations: [configuration]
     )
 

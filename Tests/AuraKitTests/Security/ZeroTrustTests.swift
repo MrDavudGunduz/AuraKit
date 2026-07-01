@@ -26,11 +26,13 @@ struct ZeroTrustTests {
     let container = try PersistenceController.makeInMemoryContainer()
     let writer = EncryptedMemoryStore(
       container: container,
-      keyManager: KeyManager(staticKey: SymmetricKey(size: .bits256))
+      keyManager: KeyManager(staticKey: SymmetricKey(size: .bits256)),
+      saveThreshold: 1
     )
     let reader = EncryptedMemoryStore(
       container: container,
-      keyManager: KeyManager(staticKey: SymmetricKey(size: .bits256))
+      keyManager: KeyManager(staticKey: SymmetricKey(size: .bits256)),
+      saveThreshold: 1
     )
     return (writer, reader)
   }

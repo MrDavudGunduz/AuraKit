@@ -9,7 +9,7 @@ import Testing
 
 @testable import AuraKit
 
-@Suite("AuraKit — Configuration Edge Cases")
+@Suite("AuraKit — Configuration Edge Cases", .serialized)
 @MainActor
 struct ConfigurationEdgeCaseTests {
 
