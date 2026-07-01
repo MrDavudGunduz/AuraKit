@@ -265,8 +265,10 @@ public actor KeyManager {
   public func clearCachedKeyForBackground() {
     cachedKey = nil
     KeyManager.logger.info(
-      "[AuraKit] KeyManager: Cached key cleared for background transition. "
-        + "Key will be re-derived on next foreground access."
+      """
+      [AuraKit] KeyManager: Cached key cleared for background transition. \
+      Key will be re-derived on next foreground access.
+      """
     )
   }
 }
