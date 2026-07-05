@@ -98,6 +98,30 @@ public struct PersistenceController: Sendable {
     return container
   }
 
+  /// Creates a production `ModelContainer` with type-safe CloudKit configuration.
+  ///
+  /// This overload provides compile-time safety for CloudKit configuration
+  /// by accepting a ``CloudKitConfiguration`` struct instead of a raw `String?`.
+  /// Use this when CloudKit sync is required and you want the compiler to
+  /// validate your configuration:
+  ///
+  /// ```swift
+  /// let config = CloudKitConfiguration(
+  ///     containerIdentifier: "iCloud.com.yourcompany.AuraKit"
+  /// )
+  /// let container = try PersistenceController.makeContainer(cloudKit: config)
+  /// ```
+  ///
+  /// - Parameter cloudKit: A validated ``CloudKitConfiguration`` specifying
+  ///   the container identifier.
+  /// - Returns: A configured `ModelContainer` with CloudKit E2EE sync enabled.
+  /// - Throws: If the container cannot be created (e.g., schema conflicts).
+  public static func makeContainer(
+    cloudKit config: CloudKitConfiguration
+  ) throws -> ModelContainer {
+    try makeContainer(cloudKitContainerIdentifier: config.containerIdentifier)
+  }
+
   /// Creates an in-memory `ModelContainer` for unit testing and SwiftUI previews.
   ///
   /// The store exists only for the lifetime of the returned container.
@@ -125,3 +149,49 @@ public struct PersistenceController: Sendable {
     return container
   }
 }
+
+// MARK: - CloudKitConfiguration
+
+/// Type-safe configuration for CloudKit E2EE sync in AuraKit's persistence layer.
+///
+/// Use this struct with ``PersistenceController/makeContainer(cloudKit:)`` to
+/// enable CloudKit End-to-End Encryption with compile-time validated parameters:
+///
+/// ```swift
+/// let cloudKit = CloudKitConfiguration(
+///     containerIdentifier: "iCloud.com.yourcompany.AuraKit"
+/// )
+/// let container = try PersistenceController.makeContainer(cloudKit: cloudKit)
+/// ```
+///
+/// ## Security
+///
+/// Combined with AuraKit's application-level AES-GCM encryption, CloudKit E2EE
+/// creates a **double-encrypted** data path. Neither Apple nor any third party
+/// can read the plaintext at any point in the sync chain:
+///
+/// ```
+/// SpatialEvent → AES-GCM (AuraKit) → SwiftData → CloudKit E2EE → iCloud
+/// ```
+///
+/// ## Thread Safety
+///
+/// `CloudKitConfiguration` is an immutable value type conforming to `Sendable`.
+/// It can be shared freely across concurrency domains.
+public struct CloudKitConfiguration: Sendable, Equatable {
+
+  /// The CloudKit container identifier (e.g., `"iCloud.com.yourcompany.AuraKit"`).
+  ///
+  /// This must match the CloudKit container configured in your app's
+  /// entitlements file and the CloudKit Dashboard.
+  public let containerIdentifier: String
+
+  /// Creates a CloudKit configuration with the given container identifier.
+  ///
+  /// - Parameter containerIdentifier: The CloudKit container ID matching
+  ///   your app's entitlements (e.g., `"iCloud.com.yourcompany.AuraKit"`).
+  public init(containerIdentifier: String) {
+    self.containerIdentifier = containerIdentifier
+  }
+}
+
