@@ -61,11 +61,10 @@ public protocol SpatialEventStore: Actor {
   ///   which can cause significant memory pressure and latency with large
   ///   datasets (1,000+ events).
   ///
-  ///   ## ⚠️ Deprecation Path
+  ///   ## Deprecation
   ///
-  ///   `allEvents()` will be deprecated in a future AuraKit release.
-  ///   Migrate to one of the bounded alternatives below **now** to avoid
-  ///   a forced migration later.
+  ///   `allEvents()` is deprecated. Migrate to one of the bounded alternatives
+  ///   below to avoid memory pressure spikes from full-table operations.
   ///
   ///   ## Choosing the Right API
   ///
@@ -76,6 +75,8 @@ public protocol SpatialEventStore: Actor {
   ///   | Large dataset streaming          | `eventStream(limit:offset:batchSize:)`  |
   ///   | Safety-critical code paths       | `allEventsIfSmallDataset(threshold:)`   |
   ///   | Unit tests / debugging           | ``allEvents()``                         |
+  // swiftlint:disable:next line_length
+  @available(*, deprecated, message: "Use events(limit:offset:) or eventStream() for bounded queries to avoid memory pressure on large datasets.")
   func allEvents() async -> [SpatialEvent]
 
   /// Returns a paginated slice of stored events in chronological order.
