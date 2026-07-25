@@ -14,7 +14,7 @@ import Testing
 
 // MARK: - Large Dataset Warning Tests
 
-@Suite("EncryptedMemoryStore — Large Dataset Protection")
+@Suite("EncryptedMemoryStore — Large Dataset Protection", .serialized)
 struct LargeDatasetWarningTests {
 
   // MARK: - Helpers

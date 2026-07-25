@@ -12,7 +12,7 @@ import Testing
 
 // MARK: - Keychain Atomic Update Tests
 
-@Suite("KeychainHelper — Atomic Update Pattern")
+@Suite("KeychainHelper — Atomic Update Pattern", .serialized)
 struct KeychainAtomicUpdateTests {
 
   // MARK: - Test Constants

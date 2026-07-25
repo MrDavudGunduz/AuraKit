@@ -13,7 +13,7 @@ import Testing
 
 @testable import AuraKit
 
-@Suite("Key Rotation Migration Integration Tests")
+@Suite("Key Rotation Migration Integration Tests", .serialized)
 struct KeyRotationMigrationTests {
 
   // MARK: - Helpers

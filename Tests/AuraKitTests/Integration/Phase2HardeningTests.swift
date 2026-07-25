@@ -15,7 +15,7 @@ import Testing
 
 // MARK: - Pagination
 
-@Suite("Paginated Query API")
+@Suite("Paginated Query API", .serialized)
 struct PaginationTests {
 
   @Test("events(limit:) returns only the requested count")
@@ -87,7 +87,7 @@ struct PaginationTests {
 
 // MARK: - Recalled Tracking (Explicit Recall API)
 
-@Suite("Survival Index Recall")
+@Suite("Survival Index Recall", .serialized)
 struct RecallTests {
 
   @Test("recallAndFetchAll() increments recalled counter per call")

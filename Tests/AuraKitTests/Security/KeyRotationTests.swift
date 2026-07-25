@@ -11,7 +11,7 @@ import Testing
 
 @testable import AuraKit
 
-@Suite("KeyManager — Key Rotation")
+@Suite("KeyManager — Key Rotation", .serialized)
 struct KeyRotationTests {
 
   // MARK: - Helpers

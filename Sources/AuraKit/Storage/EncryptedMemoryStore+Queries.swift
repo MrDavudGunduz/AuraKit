@@ -39,19 +39,9 @@ extension EncryptedMemoryStore {
 
   // MARK: - Filtered Fetch
 
-  /// Fetches memory nodes filtered by event type and sorted by score.
-  ///
-  /// This query operates on unencrypted metadata only — no decryption occurs.
-  ///
-  /// - Note: `RawMemoryNode` is a `@Model` class and is **not** `Sendable`.
-  ///   This method should be called from within the actor's isolation domain
-  ///   or from methods that project results to `Sendable` types (e.g., counts).
-  ///
-  /// - Parameters:
-  ///   - eventType: The ``SpatialEventType`` to filter by.
-  ///   - limit: Maximum number of results. Pass `nil` for all matching nodes.
-  /// - Returns: Matching ``RawMemoryNode`` records, highest score first.
-  public func fetchNodes(
+  /// Internal actor-isolated method for fetching raw `@Model` nodes.
+  /// Must NOT be exposed publicly across actor boundaries.
+  func fetchRawNodes(
     eventType: SpatialEventType,
     limit: Int? = nil
   ) -> [RawMemoryNode] {
@@ -66,10 +56,27 @@ extension EncryptedMemoryStore {
       return try modelContext.fetch(descriptor)
     } catch {
       Self.logger.error(
-        "[AuraKit] EncryptedMemoryStore: fetchNodes failed — \(error.localizedDescription)"
+        "[AuraKit] EncryptedMemoryStore: fetchRawNodes failed — \(error.localizedDescription)"
       )
       return []
     }
+  }
+
+  /// Fetches memory node metadata snapshots filtered by event type and sorted by score.
+  ///
+  /// This query operates on unencrypted metadata only — no decryption occurs.
+  /// Returns `Sendable` ``RawMemoryNodeSnapshot`` objects safe to transfer across actor boundaries.
+  ///
+  /// - Parameters:
+  ///   - eventType: The ``SpatialEventType`` to filter by.
+  ///   - limit: Maximum number of results. Pass `nil` for all matching nodes.
+  /// - Returns: Matching ``RawMemoryNodeSnapshot`` records, highest score first.
+  public func fetchNodeSnapshots(
+    eventType: SpatialEventType,
+    limit: Int? = nil
+  ) async -> [RawMemoryNodeSnapshot] {
+    let nodes = fetchRawNodes(eventType: eventType, limit: limit)
+    return nodes.compactMap { RawMemoryNodeSnapshot(node: $0) }
   }
 
   // MARK: - Single-Node Projections
@@ -403,3 +410,58 @@ extension EncryptedMemoryStore {
     }
   }
 }
+
+// MARK: - RawMemoryNodeSnapshot
+
+/// An immutable, `Sendable` snapshot of unencrypted metadata for a single ``RawMemoryNode``.
+///
+/// Designed for cross-actor metadata inspection without exposing non-`Sendable` `@Model` objects.
+public struct RawMemoryNodeSnapshot: Sendable, Equatable, Identifiable {
+
+  /// Unique identifier of the node.
+  public let id: UUID
+
+  /// Heuristic importance score.
+  public let score: Double
+
+  /// Wall-clock timestamp of creation.
+  public let timestamp: Date
+
+  /// Spatial event classification.
+  public let eventType: SpatialEventType
+
+  /// Number of times recalled.
+  public let recalled: Int
+
+  /// Key version used for encryption.
+  public let keyVersion: Int
+
+  /// Creates a node snapshot with explicit property values.
+  public init(
+    id: UUID,
+    score: Double,
+    timestamp: Date,
+    eventType: SpatialEventType,
+    recalled: Int,
+    keyVersion: Int
+  ) {
+    self.id = id
+    self.score = score
+    self.timestamp = timestamp
+    self.eventType = eventType
+    self.recalled = recalled
+    self.keyVersion = keyVersion
+  }
+
+  /// Creates a snapshot from a live ``RawMemoryNode``, or `nil` if `eventType` is invalid.
+  public init?(node: RawMemoryNode) {
+    guard let type = node.spatialEventType else { return nil }
+    self.id = node.id
+    self.score = node.score
+    self.timestamp = node.timestamp
+    self.eventType = type
+    self.recalled = node.recalled
+    self.keyVersion = node.keyVersion
+  }
+}
+

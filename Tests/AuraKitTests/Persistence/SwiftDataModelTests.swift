@@ -10,7 +10,7 @@ import Testing
 
 @testable import AuraKit
 
-@Suite("SwiftData Models — RawMemoryNode & MemoryArchiveNode")
+@Suite("SwiftData Models — RawMemoryNode & MemoryArchiveNode", .serialized)
 struct SwiftDataModelTests {
 
   private func makeContext() throws -> ModelContext {

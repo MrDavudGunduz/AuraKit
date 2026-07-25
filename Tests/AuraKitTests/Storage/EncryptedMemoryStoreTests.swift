@@ -10,7 +10,7 @@ import Testing
 
 // MARK: - Core Operations
 
-@Suite("EncryptedMemoryStore — Core Operations")
+@Suite("EncryptedMemoryStore — Core Operations", .serialized)
 struct EncryptedMemoryStoreCoreTests {
 
   @Test("append() persists an event and count increments")
@@ -74,7 +74,7 @@ struct EncryptedMemoryStoreCoreTests {
 
 // MARK: - Ciphertext Verification
 
-@Suite("EncryptedMemoryStore — Ciphertext Verification")
+@Suite("EncryptedMemoryStore — Ciphertext Verification", .serialized)
 struct EncryptedMemoryStoreCiphertextTests {
 
   @Test("Stored payload is ciphertext, not plaintext")
@@ -94,7 +94,7 @@ struct EncryptedMemoryStoreCiphertextTests {
 
 // MARK: - Extended API & Integration
 
-@Suite("EncryptedMemoryStore — Extended API")
+@Suite("EncryptedMemoryStore — Extended API", .serialized)
 struct EncryptedMemoryStoreExtendedTests {
 
   @Test("fetchNodeCount(eventType:) filters by event type")

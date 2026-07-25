@@ -12,7 +12,7 @@ import Testing
 
 // MARK: - KeychainHelper Tests
 
-@Suite("Security — KeychainHelper")
+@Suite("Security — KeychainHelper", .serialized)
 struct KeychainHelperTests {
 
   /// Unique service/account pair per test to prevent cross-test interference.

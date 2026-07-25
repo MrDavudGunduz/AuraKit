@@ -12,7 +12,7 @@ import Testing
 
 @testable import AuraKit
 
-@Suite("EncryptedMemoryStore — Edge Case Resilience")
+@Suite("EncryptedMemoryStore — Edge Case Resilience", .serialized)
 struct EdgeCaseResilienceTests {
 
   // MARK: - Helpers

@@ -12,7 +12,7 @@ import Testing
 
 // MARK: - MemoryArchiveNode Tests
 
-@Suite("Persistence — MemoryArchiveNode")
+@Suite("Persistence — MemoryArchiveNode", .serialized)
 struct MemoryArchiveNodeTests {
 
   // MARK: - Round-Trip Encoding

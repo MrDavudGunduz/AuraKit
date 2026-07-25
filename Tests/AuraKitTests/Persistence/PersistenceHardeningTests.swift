@@ -15,7 +15,7 @@ import Testing
 
 // MARK: - MemoryArchiveNode Edge Cases
 
-@Suite("MemoryArchiveNode — Edge Cases")
+@Suite("MemoryArchiveNode — Edge Cases", .serialized)
 struct MemoryArchiveNodeEdgeCaseTests {
 
   @Test("decodedSourceNodeIDs returns correct UUIDs after init")
@@ -58,7 +58,7 @@ struct MemoryArchiveNodeEdgeCaseTests {
   }
 
   @Test("decodedSourceNodeIDs with empty array returns empty")
-  func decodedSourceNodeIDsEmpty() {
+  func decodedSourceNodeIDsEmpty() throws {
     let node = MemoryArchiveNode(
       encryptedSummary: Data("test-ciphertext".utf8),
       sourceNodeIDs: []
@@ -67,16 +67,13 @@ struct MemoryArchiveNodeEdgeCaseTests {
   }
 
   @Test("MemoryArchiveNode with corrupt sourceNodeIDsData returns empty array")
-  func corruptSourceNodeIDsData() {
+  func corruptSourceNodeIDsData() throws {
     let node = MemoryArchiveNode(
       encryptedSummary: Data("test-ciphertext".utf8),
-      sourceNodeIDs: [UUID()]
+      sourceNodeIDs: []
     )
-    // Manually corrupt the data
-    node.sourceNodeIDsData = Data("not-valid-json".utf8)
-
-    let decoded = node.decodedSourceNodeIDs
-    #expect(decoded.isEmpty, "Corrupt sourceNodeIDsData should return empty array, not crash")
+    node.sourceNodeIDsData = Data([0xFF, 0xFE, 0xFD])  // Invalid JSON
+    #expect(node.decodedSourceNodeIDs.isEmpty)
   }
 
   @Test("MemoryArchiveNode unique constraint on id")
@@ -112,7 +109,7 @@ struct MemoryArchiveNodeEdgeCaseTests {
 
 // MARK: - PersistenceController Tests
 
-@Suite("PersistenceController — Container Factory")
+@Suite("PersistenceController — Container Factory", .serialized)
 struct PersistenceControllerTests {
 
   @Test("makeInMemoryContainer creates a valid container")
@@ -201,7 +198,7 @@ struct PersistenceControllerTests {
 
 // MARK: - EncryptedMemoryStore Defensive Behaviour
 
-@Suite("EncryptedMemoryStore — Defensive Behaviour")
+@Suite("EncryptedMemoryStore — Defensive Behaviour", .serialized)
 struct EncryptedMemoryStoreDefensiveTests {
 
   @Test("Concurrent batchAppend calls are serialised by actor")

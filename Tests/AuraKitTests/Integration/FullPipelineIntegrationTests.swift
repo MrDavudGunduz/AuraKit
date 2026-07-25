@@ -15,7 +15,7 @@ import Testing
 
 @testable import AuraKit
 
-@Suite("Full Pipeline Integration Tests")
+@Suite("Full Pipeline Integration Tests", .serialized)
 struct FullPipelineIntegrationTests {
 
   // MARK: - Helpers

@@ -14,7 +14,7 @@ import Testing
 
 // MARK: - @Transient Cache Tests
 
-@Suite("Persistence — @Transient Cache Validation")
+@Suite("Persistence — @Transient Cache Validation", .serialized)
 struct TransientCacheTests {
 
   // MARK: - MemoryArchiveNode Cache Behaviour
@@ -114,7 +114,7 @@ struct TransientCacheTests {
 
 // MARK: - Shutdown Flush Integration Tests
 
-@Suite("Lifecycle — Shutdown Flush Integration")
+@Suite("Lifecycle — Shutdown Flush Integration", .serialized)
 struct ShutdownFlushIntegrationTests {
 
   @Test("flushToStore drains buffer AND flushes pending writes")

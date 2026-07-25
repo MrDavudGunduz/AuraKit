@@ -14,7 +14,7 @@ import Testing
 
 // MARK: - Zero-Trust Encryption
 
-@Suite("Zero-Trust Encryption")
+@Suite("Zero-Trust Encryption", .serialized)
 struct ZeroTrustTests {
 
   /// Creates a mismatched store pair sharing the same SwiftData container

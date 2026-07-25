@@ -13,7 +13,7 @@ import Testing
 
 // MARK: - Retry Queue Tests
 
-@Suite("Storage — Retry Queue")
+@Suite("Storage — Retry Queue", .serialized)
 struct RetryQueueTests {
 
   // MARK: - Helpers

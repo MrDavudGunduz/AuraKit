@@ -17,7 +17,7 @@ import Testing
 
 // MARK: - EncryptedMemoryStore Batch Tests
 
-@Suite("EncryptedMemoryStore — Batch Append")
+@Suite("EncryptedMemoryStore — Batch Append", .serialized)
 struct EncryptedMemoryStoreBatchTests {
 
   @Test("batchAppend persists all events and count matches")

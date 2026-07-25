@@ -10,7 +10,7 @@ import Testing
 
 @testable import AuraKit
 
-@Suite("EncryptedMemoryStore — Streaming API")
+@Suite("EncryptedMemoryStore — Streaming API", .serialized)
 struct EncryptedStreamingTests {
 
   // MARK: - Helpers

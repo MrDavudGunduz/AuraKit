@@ -14,7 +14,7 @@ import Testing
 
 // MARK: - Write Coalescing Tests
 
-@Suite("Storage — Write Coalescing")
+@Suite("Storage — Write Coalescing", .serialized)
 struct WriteCoalescingTests {
 
   // MARK: - Helpers
