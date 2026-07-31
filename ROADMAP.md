@@ -146,9 +146,9 @@ Two `@Model` objects form the memory hierarchy:
 
 ---
 
-## Phase 3 — On-Device LLM & Semantic Pruning
+## Phase 3 — On-Device LLM & Semantic Pruning ✅
 
-> **Weeks 5–6 · AuraKit (MIT)**
+> **Weeks 5–6 · AuraKit (MIT)** — **COMPLETED** · 2026-07-31
 
 ### Goal
 
@@ -185,9 +185,9 @@ Memories with $SI < threshold$ are marked for pruning or archival.
 
 ### Acceptance Criteria
 
-- [ ] LLM inference completes in < 200ms for a 512-event batch on A17 Pro
-- [ ] No network activity detected in Charles Proxy during LLM inference
-- [ ] Survival Index scores verified against expected formula output in unit tests
+- [x] LLM inference completes in < 200ms for a 512-event batch on A17 Pro
+- [x] No network activity detected in Charles Proxy during LLM inference
+- [x] Survival Index scores verified against expected formula output in unit tests
 
 ---
 
@@ -293,6 +293,6 @@ AuraKit (GitHub, MIT)
 | ----------------------- | ----- | ----------------- | ------- | ---------------------------------------------------------- |
 | 1 · Capture Engine      | 1–2   | Capture + Storage | ✅ Done | `CaptureActor`, `RingBuffer`, `AuraConfiguration`          |
 | 2 · Encrypted Storage   | 3–4   | Security          | ✅ Done | SwiftData schema, AES-GCM, CloudKit E2EE, Privacy Manifest |
-| 3 · On-Device LLM       | 5–6   | Intelligence      | ⏳      | `IntelligenceActor`, MLX sandbox, Survival Index           |
+| 3 · On-Device LLM       | 5–6   | Intelligence      | ✅ Done | `IntelligenceActor`, MLX sandbox, Survival Index           |
 | 4 · Compression API     | 7     | Intelligence      | ⏳      | Semantic consolidation, IoC `compressIdleMemories()`       |
 | 5 · Profiling + Release | 8     | All               | ⏳      | Metal shaders, Instruments report, v1.0.0 release          |
