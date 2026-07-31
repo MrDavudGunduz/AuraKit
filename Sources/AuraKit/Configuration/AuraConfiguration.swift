@@ -88,6 +88,15 @@ public struct AuraConfiguration: Sendable, Equatable {
   /// Set to `0` to disable retry entirely (legacy behaviour — immediate drop).
   public static let defaultRetryQueueCapacity: Int = 10
 
+  /// Default decay constant (λ) per second used in the Survival Index formula SI(t) = S₀ · Rⁿ · e^(-λt).
+  public static let defaultDecayConstant: Double = 0.0001
+
+  /// Default recall multiplier (R) used in the Survival Index formula SI(t) = S₀ · Rⁿ · e^(-λt).
+  public static let defaultRecallMultiplier: Double = 1.2
+
+  /// Default Survival Index score threshold below which memories are pruned or archived.
+  public static let defaultSurvivalIndexThreshold: Double = 0.15
+
   // MARK: - Properties
 
   /// Heuristic importance weight for high-signal interaction events.
@@ -154,6 +163,15 @@ public struct AuraConfiguration: Sendable, Equatable {
   /// Defaults to `10`.
   public let retryQueueCapacity: Int
 
+  /// Exponential decay constant (λ) per second for Survival Index scoring.
+  public let decayConstant: Double
+
+  /// Recall multiplier (R) applied each time a memory node is queried.
+  public let recallMultiplier: Double
+
+  /// Threshold below which nodes are pruned during Survival Index evaluation.
+  public let survivalIndexThreshold: Double
+
   // MARK: - Init
 
   /// Creates a validated `AuraConfiguration`, throwing if any parameter is out of range.
@@ -165,8 +183,12 @@ public struct AuraConfiguration: Sendable, Equatable {
   ///   - storeCapacity: Max events in the persistent `MemoryStore`. Default `10_000`.
   ///     Pass `0` to disable the cap (unbounded).
   ///   - streamBatchSize: Nodes per batch in streaming decryption. Default `100`.
+  ///   - decayConstant: Decay rate (λ) per second for Survival Index calculation. Default `0.0001`.
+  ///   - recallMultiplier: Multiplier (R) for recall counts. Default `1.2`.
+  ///   - survivalIndexThreshold: Score threshold below which nodes are pruned. Default `0.15`.
   /// - Throws: ``AuraError/invalidConfiguration(reason:)`` if any parameter
   ///   is out of its valid range.
+  // swiftlint:disable:next function_body_length cyclomatic_complexity
   public init(
     interactionWeight: Double = defaultInteractionWeight,
     gazeWeight: Double = defaultGazeWeight,
@@ -175,7 +197,10 @@ public struct AuraConfiguration: Sendable, Equatable {
     streamBatchSize: Int = defaultStreamBatchSize,
     largeDatasetWarningThreshold: Int = defaultLargeDatasetWarningThreshold,
     saveThreshold: Int = defaultSaveThreshold,
-    retryQueueCapacity: Int = defaultRetryQueueCapacity
+    retryQueueCapacity: Int = defaultRetryQueueCapacity,
+    decayConstant: Double = defaultDecayConstant,
+    recallMultiplier: Double = defaultRecallMultiplier,
+    survivalIndexThreshold: Double = defaultSurvivalIndexThreshold
   ) throws {
     guard (0.0...1.0).contains(interactionWeight) else {
       throw AuraError.invalidConfiguration(
@@ -217,6 +242,21 @@ public struct AuraConfiguration: Sendable, Equatable {
         reason: "retryQueueCapacity must be >= 0, got \(retryQueueCapacity)"
       )
     }
+    guard decayConstant >= 0.0 else {
+      throw AuraError.invalidConfiguration(
+        reason: "decayConstant must be >= 0.0, got \(decayConstant)"
+      )
+    }
+    guard recallMultiplier >= 1.0 else {
+      throw AuraError.invalidConfiguration(
+        reason: "recallMultiplier must be >= 1.0, got \(recallMultiplier)"
+      )
+    }
+    guard (0.0...1.0).contains(survivalIndexThreshold) else {
+      throw AuraError.invalidConfiguration(
+        reason: "survivalIndexThreshold \(survivalIndexThreshold) is outside [0.0, 1.0]"
+      )
+    }
     self.interactionWeight = interactionWeight
     self.gazeWeight = gazeWeight
     self.bufferCapacity = bufferCapacity
@@ -225,6 +265,9 @@ public struct AuraConfiguration: Sendable, Equatable {
     self.largeDatasetWarningThreshold = largeDatasetWarningThreshold
     self.saveThreshold = saveThreshold
     self.retryQueueCapacity = retryQueueCapacity
+    self.decayConstant = decayConstant
+    self.recallMultiplier = recallMultiplier
+    self.survivalIndexThreshold = survivalIndexThreshold
   }
 
   /// Private unchecked initialiser for known-valid constant values only.
@@ -238,7 +281,10 @@ public struct AuraConfiguration: Sendable, Equatable {
     streamBatchSize: Int,
     largeDatasetWarningThreshold: Int,
     saveThreshold: Int,
-    retryQueueCapacity: Int
+    retryQueueCapacity: Int,
+    decayConstant: Double,
+    recallMultiplier: Double,
+    survivalIndexThreshold: Double
   ) {
     self.interactionWeight = interactionWeight
     self.gazeWeight = gazeWeight
@@ -248,6 +294,9 @@ public struct AuraConfiguration: Sendable, Equatable {
     self.largeDatasetWarningThreshold = largeDatasetWarningThreshold
     self.saveThreshold = saveThreshold
     self.retryQueueCapacity = retryQueueCapacity
+    self.decayConstant = decayConstant
+    self.recallMultiplier = recallMultiplier
+    self.survivalIndexThreshold = survivalIndexThreshold
   }
 }
 
@@ -264,6 +313,9 @@ extension AuraConfiguration {
   /// - `streamBatchSize`: `100`
   /// - `largeDatasetWarningThreshold`: `1_000`
   /// - `saveThreshold`: `10`
+  /// - `decayConstant`: `0.0001`
+  /// - `recallMultiplier`: `1.2`
+  /// - `survivalIndexThreshold`: `0.15`
   public static let `default` = AuraConfiguration(
     uncheckedInteractionWeight: defaultInteractionWeight,
     gazeWeight: defaultGazeWeight,
@@ -272,6 +324,9 @@ extension AuraConfiguration {
     streamBatchSize: defaultStreamBatchSize,
     largeDatasetWarningThreshold: defaultLargeDatasetWarningThreshold,
     saveThreshold: defaultSaveThreshold,
-    retryQueueCapacity: defaultRetryQueueCapacity
+    retryQueueCapacity: defaultRetryQueueCapacity,
+    decayConstant: defaultDecayConstant,
+    recallMultiplier: defaultRecallMultiplier,
+    survivalIndexThreshold: defaultSurvivalIndexThreshold
   )
 }
