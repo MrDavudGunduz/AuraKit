@@ -109,6 +109,11 @@ import os.log
 // - ``KeyManager``
 // - ``EncryptionService``
 //
+// ### Intelligence
+// - ``IntelligenceActor``
+// - ``SurvivalIndex``
+// - ``MLXModelProvider``
+//
 // ### Errors
 // - ``AuraError``
 
