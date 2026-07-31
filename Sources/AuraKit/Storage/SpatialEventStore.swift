@@ -97,6 +97,9 @@ public protocol SpatialEventStore: Actor {
   /// Flushes any pending writes that have been coalesced but not yet persisted.
   ///
   /// For stores with write coalescing (e.g., ``EncryptedMemoryStore`` with
+  /// Flushes any pending writes that have been coalesced but not yet persisted.
+  ///
+  /// For stores with write coalescing (e.g., ``EncryptedMemoryStore`` with
   /// ``saveThreshold`` > 1), `append()` may defer persistence until a threshold
   /// is reached. This method forces an immediate commit of all pending inserts.
   ///
@@ -106,6 +109,14 @@ public protocol SpatialEventStore: Actor {
   /// The default implementation is a no-op — stores without write coalescing
   /// (e.g., ``MemoryStore``) do not need to override this.
   func flushPendingWrites() async
+
+  /// Removes events with the specified IDs from the store.
+  ///
+  /// Used by ``IntelligenceActor`` during semantic pruning passes.
+  /// - Parameter ids: The set of event UUIDs to remove.
+  /// - Returns: The number of events actually removed.
+  @discardableResult
+  func removeEvents(withIDs ids: Set<UUID>) async -> Int
 }
 
 // MARK: - Default Implementations
@@ -136,4 +147,10 @@ extension SpatialEventStore {
 
   /// Default no-op implementation for stores that do not use write coalescing.
   public func flushPendingWrites() async {}
+
+  /// Default implementation for removeEvents — no-op by default unless overridden.
+  @discardableResult
+  public func removeEvents(withIDs ids: Set<UUID>) async -> Int {
+    0
+  }
 }

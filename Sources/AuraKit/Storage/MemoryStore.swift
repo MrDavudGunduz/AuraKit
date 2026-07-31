@@ -254,5 +254,33 @@ public actor MemoryStore: SpatialEventStore {
     }
     _count = 0
   }
+
+  /// Removes events with the specified IDs from memory.
+  ///
+  /// - Parameter ids: Set of event UUIDs to remove.
+  /// - Returns: The number of events deleted.
+  @discardableResult
+  public func removeEvents(withIDs ids: Set<UUID>) -> Int {
+    guard !ids.isEmpty, _count > 0 else { return 0 }
+    let initialCount = _count
+
+    switch mode {
+    case .bounded(let storage, _, let capacity):
+      let activeEvents = allEvents().filter { !ids.contains($0.id) }
+      var newStorage = Array<SpatialEvent?>(repeating: nil, count: capacity)
+      for (idx, event) in activeEvents.enumerated() {
+        newStorage[idx] = event
+      }
+      _count = activeEvents.count
+      mode = .bounded(storage: newStorage, writeIndex: activeEvents.count % capacity, capacity: capacity)
+
+    case .unbounded(var storage):
+      storage.removeAll(where: { ids.contains($0.id) })
+      _count = storage.count
+      mode = .unbounded(storage: storage)
+    }
+
+    return initialCount - _count
+  }
 }
 

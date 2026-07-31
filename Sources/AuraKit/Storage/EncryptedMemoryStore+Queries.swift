@@ -409,6 +409,29 @@ extension EncryptedMemoryStore {
       modelContext.rollback()
     }
   }
+
+  /// Removes events with the specified IDs from the SwiftData store.
+  ///
+  /// - Parameter ids: Set of event UUIDs to remove.
+  /// - Returns: Number of nodes removed.
+  @discardableResult
+  public func removeEvents(withIDs ids: Set<UUID>) async -> Int {
+    guard !ids.isEmpty else { return 0 }
+    await flushPendingWrites()
+
+    do {
+      let targetIDs = ids
+      try modelContext.delete(
+        model: RawMemoryNode.self,
+        where: #Predicate<RawMemoryNode> { targetIDs.contains($0.id) }
+      )
+      try modelContext.save()
+      return ids.count
+    } catch {
+      modelContext.rollback()
+      return 0
+    }
+  }
 }
 
 // MARK: - RawMemoryNodeSnapshot
