@@ -265,7 +265,7 @@ public actor MemoryStore: SpatialEventStore {
     let initialCount = _count
 
     switch mode {
-    case .bounded(let storage, _, let capacity):
+    case .bounded(_, _, let capacity):
       let activeEvents = allEvents().filter { !ids.contains($0.id) }
       var newStorage = Array<SpatialEvent?>(repeating: nil, count: capacity)
       for (idx, event) in activeEvents.enumerated() {

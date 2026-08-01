@@ -100,6 +100,9 @@ public final class AuraKitLifecycleObserver: Sendable {
       Self.logger.info(
         "[AuraKit] Background transition: Flushed \(flushed) events to store."
       )
+      
+      await capture.clearSensitiveDataForBackground()
+      Self.logger.info("[AuraKit] Background transition: Cleared sensitive data.")
     }
   }
 }

@@ -255,12 +255,24 @@ public final class AuraKit {
     bufferCapacity: Int = AuraConfiguration.defaultBufferCapacity,
     storeCapacity: Int = AuraConfiguration.defaultStoreCapacity
   ) throws {
-    let config = try AuraConfiguration(
+    let captureConfig = try CaptureConfiguration(
       interactionWeight: interactionWeight,
       gazeWeight: gazeWeight,
-      bufferCapacity: bufferCapacity,
-      storeCapacity: storeCapacity
+      bufferCapacity: bufferCapacity
     )
+    let storageConfig = try StorageConfiguration(
+      capacity: storeCapacity,
+      streamBatchSize: AuraConfiguration.defaultStreamBatchSize,
+      largeDatasetWarningThreshold: AuraConfiguration.defaultLargeDatasetWarningThreshold,
+      saveThreshold: AuraConfiguration.defaultSaveThreshold,
+      retryQueueCapacity: AuraConfiguration.defaultRetryQueueCapacity
+    )
+    let intelligenceConfig = try IntelligenceConfiguration(
+      decayConstant: AuraConfiguration.defaultDecayConstant,
+      recallMultiplier: AuraConfiguration.defaultRecallMultiplier,
+      survivalIndexThreshold: AuraConfiguration.defaultSurvivalIndexThreshold
+    )
+    let config = AuraConfiguration(capture: captureConfig, storage: storageConfig, intelligence: intelligenceConfig)
     try configure(with: config)
   }
 

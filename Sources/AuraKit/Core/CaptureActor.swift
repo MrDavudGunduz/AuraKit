@@ -83,8 +83,8 @@ public actor CaptureActor {
   ///     `EncryptedSwiftDataStore` for production persistence.
   public init(config: AuraConfiguration, store: (any SpatialEventStore)? = nil) {
     self.config = config
-    self.store = store ?? MemoryStore(capacity: config.storeCapacity)
-    self.buffer = RingBuffer<SpatialEvent>(capacity: config.bufferCapacity)
+    self.store = store ?? MemoryStore(capacity: config.storage.capacity)
+    self.buffer = RingBuffer<SpatialEvent>(capacity: config.capture.bufferCapacity)
     self.router = HeuristicRouter()
   }
 
@@ -221,5 +221,13 @@ public actor CaptureActor {
     await store.flushPendingWrites()
 
     return events.count
+  }
+
+  // MARK: - Security
+
+  /// Clears sensitive data (like cached encryption keys) in the underlying persistent store.
+  /// Called automatically by `AuraKitLifecycleObserver` when the app moves to the background.
+  public func clearSensitiveDataForBackground() async {
+    await store.clearSensitiveDataForBackground()
   }
 }

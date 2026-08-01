@@ -74,8 +74,8 @@ public struct SurvivalIndex: Sendable {
       initialScore: event.score,
       recallCount: recallCount,
       ageInSeconds: age,
-      decayConstant: config.decayConstant,
-      recallMultiplier: config.recallMultiplier
+      decayConstant: config.intelligence.decayConstant,
+      recallMultiplier: config.intelligence.recallMultiplier
     )
   }
 }

@@ -117,6 +117,12 @@ public protocol SpatialEventStore: Actor {
   /// - Returns: The number of events actually removed.
   @discardableResult
   func removeEvents(withIDs ids: Set<UUID>) async -> Int
+
+  /// Clears sensitive data (like cached encryption keys) when moving to the background.
+  ///
+  /// Forces re-derivation from the Secure Enclave upon returning to the foreground,
+  /// minimizing the time symmetric keys reside in process memory.
+  func clearSensitiveDataForBackground() async
 }
 
 // MARK: - Default Implementations
@@ -153,4 +159,7 @@ extension SpatialEventStore {
   public func removeEvents(withIDs ids: Set<UUID>) async -> Int {
     0
   }
+
+  /// Default implementation is a no-op.
+  public func clearSensitiveDataForBackground() async {}
 }

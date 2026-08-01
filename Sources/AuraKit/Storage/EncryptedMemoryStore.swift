@@ -444,6 +444,15 @@ public actor EncryptedMemoryStore: SpatialEventStore {
       return []
     }
   }
+
+  // MARK: - Lifecycle & Security
+
+  /// Clears sensitive cached symmetric keys from process memory when transitioning
+  /// to the background, enforcing AuraKit's Zero-Trust design.
+  public func clearSensitiveDataForBackground() async {
+    await keyManager.clearCachedKeyForBackground()
+    Self.logger.info("[AuraKit] EncryptedMemoryStore: Cleared sensitive key material for background transition.")
+  }
 }
 
 // MARK: - StoreMetrics

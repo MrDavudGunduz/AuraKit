@@ -80,11 +80,11 @@ public struct HeuristicRouter: Sendable {
     switch event.kind {
     case .interaction:
       // High-signal: write directly to persistent memory. LLM bypass.
-      return .directStore(score: config.interactionWeight)
+      return .directStore(score: config.capture.interactionWeight)
 
     case .gaze:
       // Low-signal: enqueue for batched LLM processing.
-      return .enqueueBuffer(score: config.gazeWeight)
+      return .enqueueBuffer(score: config.capture.gazeWeight)
     }
   }
 }

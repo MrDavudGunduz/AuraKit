@@ -86,8 +86,8 @@ public actor IntelligenceActor {
         initialScore: initialScore,
         recallCount: 0,
         ageInSeconds: ageInSeconds,
-        decayConstant: config.decayConstant,
-        recallMultiplier: config.recallMultiplier
+        decayConstant: config.intelligence.decayConstant,
+        recallMultiplier: config.intelligence.recallMultiplier
       )
 
       evaluatedEvents.append(event.withScore(calculatedSI))
@@ -111,7 +111,7 @@ public actor IntelligenceActor {
 
     var pruneIDs = Set<UUID>()
     for event in evaluated {
-      if event.score < config.survivalIndexThreshold {
+      if event.score < config.intelligence.survivalIndexThreshold {
         pruneIDs.insert(event.id)
       }
     }
@@ -119,7 +119,7 @@ public actor IntelligenceActor {
     let deletedCount: Int
     if !pruneIDs.isEmpty {
       deletedCount = await store.removeEvents(withIDs: pruneIDs)
-      Self.logger.info("[AuraKit] IntelligenceActor: Pruned \(deletedCount) events below SI threshold \(self.config.survivalIndexThreshold).")
+      Self.logger.info("[AuraKit] IntelligenceActor: Pruned \(deletedCount) events below SI threshold \(self.config.intelligence.survivalIndexThreshold).")
     } else {
       deletedCount = 0
     }
