@@ -111,6 +111,14 @@ public actor EncryptedMemoryStore: SpatialEventStore {
   /// Configured at init time. `0` disables retry entirely.
   nonisolated let retryQueueCapacity: Int
 
+  /// Interval in seconds between scheduled retry queue drain attempts.
+  /// `0` disables scheduled draining (retry only occurs on next `append()`).
+  nonisolated let retryDrainInterval: TimeInterval
+
+  /// Background task that periodically drains the retry queue.
+  /// `nil` when scheduled draining is disabled (`retryDrainInterval == 0`).
+  private var retryDrainTask: Task<Void, Never>?
+
   /// Continuation for the dropped event notification stream.
   /// Retained for the lifetime of the actor; yields a ``DroppedEvent``
   /// each time an event fails to persist.
@@ -160,7 +168,8 @@ public actor EncryptedMemoryStore: SpatialEventStore {
     encryptionService: EncryptionService = EncryptionService(),
     largeDatasetWarningThreshold: Int = AuraConfiguration.defaultLargeDatasetWarningThreshold,
     saveThreshold: Int = AuraConfiguration.defaultSaveThreshold,
-    retryQueueCapacity: Int = AuraConfiguration.defaultRetryQueueCapacity
+    retryQueueCapacity: Int = AuraConfiguration.defaultRetryQueueCapacity,
+    retryDrainInterval: TimeInterval = AuraConfiguration.defaultRetryDrainInterval
   ) {
     self.modelContext = ModelContext(container)
     // Explicit save() calls control write timing — disable autosave
@@ -171,6 +180,7 @@ public actor EncryptedMemoryStore: SpatialEventStore {
     self.largeDatasetWarningThreshold = largeDatasetWarningThreshold
     self.saveThreshold = max(saveThreshold, 1)
     self.retryQueueCapacity = max(retryQueueCapacity, 0)
+    self.retryDrainInterval = max(retryDrainInterval, 0)
 
     // Set up the dropped event notification stream.
     var continuation: AsyncStream<DroppedEvent>.Continuation!
@@ -178,6 +188,13 @@ public actor EncryptedMemoryStore: SpatialEventStore {
       continuation = $0
     }
     self._dropContinuation = continuation
+
+    // Start scheduled retry drain if enabled and retry queue is active.
+    if retryDrainInterval > 0, retryQueueCapacity > 0 {
+      self.retryDrainTask = Task { [weak self] in
+        await self?.scheduledRetryDrainLoop()
+      }
+    }
   }
 
   // MARK: - Observability
@@ -455,30 +472,3 @@ public actor EncryptedMemoryStore: SpatialEventStore {
   }
 }
 
-// MARK: - StoreMetrics
-
-/// An immutable, `Sendable` snapshot of ``EncryptedMemoryStore`` observability
-/// counters captured at a single point in time.
-///
-/// Designed for production telemetry — pass this across actor boundaries
-/// without holding a reference to the store itself.
-public struct StoreMetrics: Sendable, Equatable {
-
-  /// Total number of events successfully encrypted and persisted.
-  public let totalEventsWritten: Int
-
-  /// Total number of events that failed to persist (key, encryption, or save failure).
-  public let droppedEventCount: Int
-
-  /// Total number of individual node decryption failures.
-  public let decryptionFailureCount: Int
-
-  /// The write success rate as a percentage `[0.0, 100.0]`.
-  ///
-  /// Returns `100.0` when no events have been processed (no failures, no writes).
-  public var writeSuccessRate: Double {
-    let total = totalEventsWritten + droppedEventCount
-    guard total > 0 else { return 100.0 }
-    return (Double(totalEventsWritten) / Double(total)) * 100.0
-  }
-}

@@ -184,3 +184,49 @@ extension EncryptedMemoryStore {
   }
 }
 
+// MARK: - EncryptedMemoryStore + Scheduled Retry Drain
+
+extension EncryptedMemoryStore {
+
+  /// Periodically drains the retry queue at the configured ``retryDrainInterval``.
+  ///
+  /// This loop runs as a long-lived `Task` launched during `init` when both
+  /// `retryDrainInterval > 0` and `retryQueueCapacity > 0`. It sleeps for
+  /// the configured interval, then drains any queued events — ensuring stale
+  /// retry events are re-attempted even when no new `append()` calls arrive.
+  ///
+  /// The loop is cooperative: it exits gracefully when the Task is cancelled
+  /// (e.g., via ``cancelScheduledRetryDrain()``).
+  func scheduledRetryDrainLoop() async {
+    let intervalNanoseconds = UInt64(retryDrainInterval * 1_000_000_000)
+
+    while !Task.isCancelled {
+      do {
+        try await Task.sleep(nanoseconds: intervalNanoseconds)
+      } catch {
+        // Task.sleep throws CancellationError when the task is cancelled.
+        break
+      }
+
+      guard !_retryQueue.isEmpty else { continue }
+
+      Self.logger.debug(
+        "[AuraKit] EncryptedMemoryStore: Scheduled retry drain — \(self._retryQueue.count) events queued."
+      )
+      await drainRetryQueue()
+    }
+  }
+
+  /// Cancels the scheduled retry drain task.
+  ///
+  /// Call this during store teardown or when reconfiguring the retry interval.
+  /// After cancellation, retry events are only drained on the next `append()` call
+  /// or explicit ``flushRetryQueue()`` invocation.
+  public func cancelScheduledRetryDrain() {
+    retryDrainTask?.cancel()
+    retryDrainTask = nil
+    Self.logger.debug(
+      "[AuraKit] EncryptedMemoryStore: Scheduled retry drain cancelled."
+    )
+  }
+}

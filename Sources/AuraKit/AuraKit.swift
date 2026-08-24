@@ -265,7 +265,8 @@ public final class AuraKit {
       streamBatchSize: AuraConfiguration.defaultStreamBatchSize,
       largeDatasetWarningThreshold: AuraConfiguration.defaultLargeDatasetWarningThreshold,
       saveThreshold: AuraConfiguration.defaultSaveThreshold,
-      retryQueueCapacity: AuraConfiguration.defaultRetryQueueCapacity
+      retryQueueCapacity: AuraConfiguration.defaultRetryQueueCapacity,
+      retryDrainInterval: AuraConfiguration.defaultRetryDrainInterval
     )
     let intelligenceConfig = try IntelligenceConfiguration(
       decayConstant: AuraConfiguration.defaultDecayConstant,

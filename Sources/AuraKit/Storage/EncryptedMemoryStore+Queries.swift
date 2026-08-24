@@ -144,7 +144,8 @@ extension EncryptedMemoryStore {
     StoreMetrics(
       totalEventsWritten: _totalEventsWritten,
       droppedEventCount: _droppedEventCount,
-      decryptionFailureCount: _decryptionFailureCount
+      decryptionFailureCount: _decryptionFailureCount,
+      retryQueueCount: _retryQueue.count
     )
   }
 

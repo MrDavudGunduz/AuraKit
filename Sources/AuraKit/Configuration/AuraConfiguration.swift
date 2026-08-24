@@ -43,8 +43,9 @@ public struct StorageConfiguration: Sendable, Equatable {
   public let largeDatasetWarningThreshold: Int
   public let saveThreshold: Int
   public let retryQueueCapacity: Int
+  public let retryDrainInterval: TimeInterval
 
-  public init(capacity: Int, streamBatchSize: Int, largeDatasetWarningThreshold: Int, saveThreshold: Int, retryQueueCapacity: Int) throws {
+  public init(capacity: Int, streamBatchSize: Int, largeDatasetWarningThreshold: Int, saveThreshold: Int, retryQueueCapacity: Int, retryDrainInterval: TimeInterval = 30.0) throws {
     guard capacity >= 0 else {
       throw AuraError.invalidConfiguration(reason: "storeCapacity must be >= 0, got \(capacity)")
     }
@@ -60,19 +61,24 @@ public struct StorageConfiguration: Sendable, Equatable {
     guard retryQueueCapacity >= 0 else {
       throw AuraError.invalidConfiguration(reason: "retryQueueCapacity must be >= 0, got \(retryQueueCapacity)")
     }
+    guard retryDrainInterval >= 0 else {
+      throw AuraError.invalidConfiguration(reason: "retryDrainInterval must be >= 0, got \(retryDrainInterval)")
+    }
     self.capacity = capacity
     self.streamBatchSize = streamBatchSize
     self.largeDatasetWarningThreshold = largeDatasetWarningThreshold
     self.saveThreshold = saveThreshold
     self.retryQueueCapacity = retryQueueCapacity
+    self.retryDrainInterval = retryDrainInterval
   }
 
-  internal init(uncheckedCapacity: Int, streamBatchSize: Int, largeDatasetWarningThreshold: Int, saveThreshold: Int, retryQueueCapacity: Int) {
+  internal init(uncheckedCapacity: Int, streamBatchSize: Int, largeDatasetWarningThreshold: Int, saveThreshold: Int, retryQueueCapacity: Int, retryDrainInterval: TimeInterval = 30.0) {
     self.capacity = uncheckedCapacity
     self.streamBatchSize = streamBatchSize
     self.largeDatasetWarningThreshold = largeDatasetWarningThreshold
     self.saveThreshold = saveThreshold
     self.retryQueueCapacity = retryQueueCapacity
+    self.retryDrainInterval = retryDrainInterval
   }
 }
 
@@ -133,6 +139,7 @@ public struct AuraConfiguration: Sendable, Equatable {
   public static let defaultLargeDatasetWarningThreshold: Int = AuraKitConstants.defaultLargeDatasetWarningThreshold
   public static let defaultSaveThreshold: Int = 10
   public static let defaultRetryQueueCapacity: Int = 10
+  public static let defaultRetryDrainInterval: TimeInterval = 30.0
   public static let defaultDecayConstant: Double = 0.0001
   public static let defaultRecallMultiplier: Double = 1.2
   public static let defaultSurvivalIndexThreshold: Double = 0.15
