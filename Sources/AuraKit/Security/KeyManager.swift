@@ -185,12 +185,29 @@ public actor KeyManager {
     guard let data = KeychainHelper.retrieve(
       service: keychainService,
       account: keyVersionKeychainAccount
-    ),
-      let string = String(data: data, encoding: .utf8),
-      let version = Int(string)
-    else {
+    ) else {
+      // No persisted version — this is expected on first launch.
+      logger.debug(
+        "[AuraKit] KeyManager: No persisted keyVersion found in Keychain (first launch). Defaulting to 0."
+      )
       return 0
     }
+
+    guard let string = String(data: data, encoding: .utf8),
+      let version = Int(string)
+    else {
+      // Data exists but is malformed — this is unexpected and may indicate
+      // Keychain corruption or a schema change between versions.
+      logger.warning(
+        """
+        [AuraKit] KeyManager: Persisted keyVersion data exists in Keychain but \
+        could not be parsed as UTF-8 integer. Defaulting to 0. \
+        This may indicate Keychain corruption — monitor for key version mismatches.
+        """
+      )
+      return 0
+    }
+
     logger.debug(
       "[AuraKit] KeyManager: Bootstrapped keyVersion from Keychain: \(version)."
     )
