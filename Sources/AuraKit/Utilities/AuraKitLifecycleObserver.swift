@@ -33,7 +33,7 @@ import AppKit
 /// AuraKit.shared.startLifecycleObserver()
 /// ```
 @MainActor
-public final class AuraKitLifecycleObserver: Sendable {
+public final class AuraKitLifecycleObserver {
 
   private static let logger = Logger(
     subsystem: AuraKitConstants.subsystem,

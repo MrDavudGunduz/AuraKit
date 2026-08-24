@@ -280,7 +280,13 @@ public actor MemoryStore: SpatialEventStore {
       mode = .unbounded(storage: storage)
     }
 
-    return initialCount - _count
+    let removedCount = initialCount - _count
+    if removedCount > 0 {
+      MemoryStore.logger.debug(
+        "[AuraKit] MemoryStore: Removed \(removedCount) events (requested: \(ids.count))."
+      )
+    }
+    return removedCount
   }
 }
 

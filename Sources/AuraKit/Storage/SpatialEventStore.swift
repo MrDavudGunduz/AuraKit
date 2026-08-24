@@ -61,22 +61,19 @@ public protocol SpatialEventStore: Actor {
   ///   which can cause significant memory pressure and latency with large
   ///   datasets (1,000+ events).
   ///
-  ///   ## Deprecation
+  /// ## Choosing the Right API
   ///
-  ///   `allEvents()` is deprecated. Migrate to one of the bounded alternatives
-  ///   below to avoid memory pressure spikes from full-table operations.
+  /// | Use Case                        | Recommended API                         |
+  /// |---------------------------------|-----------------------------------------|
+  /// | Known-small dataset (\< 1,000)   | ``allEvents()``                         |
+  /// | Production with unknown size    | ``events(limit:offset:)``               |
+  /// | Large dataset streaming          | `eventStream(limit:offset:batchSize:)`  |
+  /// | Safety-critical code paths       | `allEventsIfSmallDataset(threshold:)`   |
+  /// | Unit tests / debugging           | ``allEvents()``                         |
   ///
-  ///   ## Choosing the Right API
-  ///
-  ///   | Use Case                        | Recommended API                         |
-  ///   |---------------------------------|-----------------------------------------|
-  ///   | Known-small dataset (\< 1,000)   | ``allEvents()``                         |
-  ///   | Production with unknown size    | ``events(limit:offset:)``               |
-  ///   | Large dataset streaming          | `eventStream(limit:offset:batchSize:)`  |
-  ///   | Safety-critical code paths       | `allEventsIfSmallDataset(threshold:)`   |
-  ///   | Unit tests / debugging           | ``allEvents()``                         |
-  // swiftlint:disable:next line_length
-  @available(*, deprecated, message: "Use events(limit:offset:) or eventStream() for bounded queries to avoid memory pressure on large datasets.")
+  /// - Note: For production code paths with unknown dataset sizes, prefer
+  ///   ``events(limit:offset:)`` or ``allEventsIfSmallDataset(threshold:)``
+  ///   to avoid memory pressure from full-table operations.
   func allEvents() async -> [SpatialEvent]
 
   /// Returns a paginated slice of stored events in chronological order.
@@ -94,9 +91,6 @@ public protocol SpatialEventStore: Actor {
   /// The total number of events currently in the store.
   var count: Int { get async }
 
-  /// Flushes any pending writes that have been coalesced but not yet persisted.
-  ///
-  /// For stores with write coalescing (e.g., ``EncryptedMemoryStore`` with
   /// Flushes any pending writes that have been coalesced but not yet persisted.
   ///
   /// For stores with write coalescing (e.g., ``EncryptedMemoryStore`` with
