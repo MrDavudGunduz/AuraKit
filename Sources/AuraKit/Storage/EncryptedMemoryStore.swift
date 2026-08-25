@@ -117,7 +117,7 @@ public actor EncryptedMemoryStore: SpatialEventStore {
 
   /// Background task that periodically drains the retry queue.
   /// `nil` when scheduled draining is disabled (`retryDrainInterval == 0`).
-  private var retryDrainTask: Task<Void, Never>?
+  internal var retryDrainTask: Task<Void, Never>?
 
   /// Continuation for the dropped event notification stream.
   /// Retained for the lifetime of the actor; yields a ``DroppedEvent``
@@ -191,8 +191,8 @@ public actor EncryptedMemoryStore: SpatialEventStore {
 
     // Start scheduled retry drain if enabled and retry queue is active.
     if retryDrainInterval > 0, retryQueueCapacity > 0 {
-      self.retryDrainTask = Task { [weak self] in
-        await self?.scheduledRetryDrainLoop()
+      Task { [weak self] in
+        await self?.startScheduledRetryDrain()
       }
     }
   }

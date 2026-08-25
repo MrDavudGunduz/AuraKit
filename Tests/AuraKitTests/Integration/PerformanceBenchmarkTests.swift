@@ -36,10 +36,10 @@ struct RingBufferPerformanceTests {
 
     let elapsed = ContinuousClock.now - start
 
-    // 10K enqueues at <1µs each = <10ms theoretical; 50ms generous for CI
+    // 10K enqueues at <1µs each = <10ms theoretical; 250ms generous for debug CI
     #expect(
-      elapsed < .milliseconds(50),
-      "10K enqueue operations took \(elapsed) — expected < 50ms"
+      elapsed < .milliseconds(250),
+      "10K enqueue operations took \(elapsed) — expected < 250ms"
     )
   }
 

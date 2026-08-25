@@ -217,6 +217,14 @@ extension EncryptedMemoryStore {
     }
   }
 
+  /// Starts the scheduled retry drain loop if not already running.
+  internal func startScheduledRetryDrain() {
+    guard retryDrainTask == nil, retryDrainInterval > 0, retryQueueCapacity > 0 else { return }
+    retryDrainTask = Task { [weak self] in
+      await self?.scheduledRetryDrainLoop()
+    }
+  }
+
   /// Cancels the scheduled retry drain task.
   ///
   /// Call this during store teardown or when reconfiguring the retry interval.

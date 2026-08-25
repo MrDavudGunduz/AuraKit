@@ -45,7 +45,14 @@ public struct StorageConfiguration: Sendable, Equatable {
   public let retryQueueCapacity: Int
   public let retryDrainInterval: TimeInterval
 
-  public init(capacity: Int, streamBatchSize: Int, largeDatasetWarningThreshold: Int, saveThreshold: Int, retryQueueCapacity: Int, retryDrainInterval: TimeInterval = 30.0) throws {
+  public init(
+    capacity: Int,
+    streamBatchSize: Int,
+    largeDatasetWarningThreshold: Int,
+    saveThreshold: Int,
+    retryQueueCapacity: Int,
+    retryDrainInterval: TimeInterval = 30.0
+  ) throws {
     guard capacity >= 0 else {
       throw AuraError.invalidConfiguration(reason: "storeCapacity must be >= 0, got \(capacity)")
     }
@@ -72,7 +79,14 @@ public struct StorageConfiguration: Sendable, Equatable {
     self.retryDrainInterval = retryDrainInterval
   }
 
-  internal init(uncheckedCapacity: Int, streamBatchSize: Int, largeDatasetWarningThreshold: Int, saveThreshold: Int, retryQueueCapacity: Int, retryDrainInterval: TimeInterval = 30.0) {
+  internal init(
+    uncheckedCapacity: Int,
+    streamBatchSize: Int,
+    largeDatasetWarningThreshold: Int,
+    saveThreshold: Int,
+    retryQueueCapacity: Int,
+    retryDrainInterval: TimeInterval = 30.0
+  ) {
     self.capacity = uncheckedCapacity
     self.streamBatchSize = streamBatchSize
     self.largeDatasetWarningThreshold = largeDatasetWarningThreshold
