@@ -30,6 +30,19 @@ public struct MockMLXModelProvider: MLXModelProvider, Sendable {
   /// Custom score override handler if provided.
   private let customScoreProvider: (@Sendable (String) -> String)?
 
+  /// Initializes a mock MLX provider with a fixed mock response.
+  ///
+  /// - Parameters:
+  ///   - mockResponse: The string response to return for all inference calls.
+  ///   - latencyMs: Simulated latency in milliseconds (default: 0ms).
+  public init(
+    mockResponse: String,
+    latencyMs: UInt64 = 0
+  ) {
+    self.latencyMs = latencyMs
+    self.customScoreProvider = { _ in mockResponse }
+  }
+
   /// Initializes a mock MLX provider.
   ///
   /// - Parameters:
