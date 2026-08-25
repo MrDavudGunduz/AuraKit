@@ -64,10 +64,41 @@ public actor CaptureActor {
   private let router: HeuristicRouter
 
   /// Direct memory sink for high-signal interaction events.
-  private let store: any SpatialEventStore
+  ///
+  /// Exposed as `internal` to allow ``MemoryManager`` to access the store
+  /// for compression queries. Actor isolation ensures thread safety.
+  let store: any SpatialEventStore
 
   /// The active configuration driving routing weights and buffer sizing.
   private let config: AuraConfiguration
+
+  /// The intelligence actor for LLM evaluation and cognitive compression.
+  ///
+  /// Lazily initialized on first access — avoids paying the construction
+  /// cost when the host application never uses compression or evaluation.
+  private var _intelligenceActor: IntelligenceActor?
+
+  /// The intelligence actor for LLM operations including cognitive compression.
+  ///
+  /// Lazily creates an ``IntelligenceActor`` configured with this capture's
+  /// configuration and backing store. Used by ``MemoryManager`` for compression.
+  ///
+  /// - Parameter modelProvider: Optional model provider override (for testing).
+  /// - Returns: The shared ``IntelligenceActor`` instance for this capture pipeline.
+  public func intelligenceActor(
+    modelProvider: (any MLXModelProvider)? = nil
+  ) -> IntelligenceActor {
+    if let existing = _intelligenceActor {
+      return existing
+    }
+    let actor = IntelligenceActor(
+      config: config,
+      store: store,
+      modelProvider: modelProvider
+    )
+    _intelligenceActor = actor
+    return actor
+  }
 
   // MARK: - Init
 

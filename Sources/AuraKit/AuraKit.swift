@@ -306,6 +306,29 @@ public final class AuraKit {
     _capture
   }
 
+  /// The memory management API for cognitive compression and archive operations.
+  ///
+  /// Provides the **Inversion of Control** surface for Phase 4 cognitive
+  /// compression. Compression is never automatic — the host application
+  /// triggers it explicitly at safe points (loading screens, cutscenes,
+  /// or in-game sleep sessions):
+  ///
+  /// ```swift
+  /// // Safe to call during loading screens, cutscenes, or in-game sleep sessions
+  /// let report = try await AuraKit.shared.memory.compressIdleMemories()
+  /// ```
+  ///
+  /// - Throws: ``AuraError/notConfigured`` if ``configure(with:)`` has not
+  ///   been called.
+  public var memory: MemoryManager {
+    get throws {
+      guard let capture = _capture else {
+        throw AuraError.notConfigured
+      }
+      return MemoryManager(captureActor: capture)
+    }
+  }
+
   /// Whether `configure(with:)` has been called and the pipeline is active.
   ///
   /// Use this for guard-style checks where catching `AuraError.notConfigured`

@@ -84,4 +84,17 @@ extension AuraKit {
   ) {
     shared.configureIfNeeded(with: config, store: store)
   }
+
+  /// Convenience static wrapper for ``memory``.
+  ///
+  /// Provides access to the memory management API for cognitive compression:
+  ///
+  /// ```swift
+  /// let report = try await AuraKit.memory.compressIdleMemories()
+  /// ```
+  ///
+  /// - Throws: ``AuraError/notConfigured`` if not yet configured.
+  public static var memory: MemoryManager {
+    get throws { try shared.memory }
+  }
 }
