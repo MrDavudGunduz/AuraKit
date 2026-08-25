@@ -164,3 +164,43 @@ extension MemoryArchiveNode {
   }
 }
 
+// MARK: - MemoryArchiveNodeSnapshot
+
+/// A thread-safe, immutable snapshot of a ``MemoryArchiveNode`` entity.
+///
+/// Designed to be passed across actor boundaries without violating
+/// Swift 6 concurrency rules.
+public struct MemoryArchiveNodeSnapshot: Sendable, Equatable, Identifiable {
+
+  /// Unique identifier of the archive.
+  public let id: UUID
+
+  /// AES-GCM encrypted summary payload.
+  public let encryptedSummary: Data
+
+  /// Timestamp when this archive was created.
+  public let createdAt: Date
+
+  /// Pruned source node UUIDs consolidated into this archive.
+  public let sourceNodeIDs: [UUID]
+
+  public init(
+    id: UUID,
+    encryptedSummary: Data,
+    createdAt: Date,
+    sourceNodeIDs: [UUID]
+  ) {
+    self.id = id
+    self.encryptedSummary = encryptedSummary
+    self.createdAt = createdAt
+    self.sourceNodeIDs = sourceNodeIDs
+  }
+
+  public init(archive: MemoryArchiveNode) {
+    self.id = archive.id
+    self.encryptedSummary = archive.encryptedSummary
+    self.createdAt = archive.createdAt
+    self.sourceNodeIDs = archive.decodedSourceNodeIDs
+  }
+}
+

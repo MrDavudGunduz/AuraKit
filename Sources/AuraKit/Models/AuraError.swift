@@ -101,6 +101,16 @@ public enum AuraError: Error, Sendable, Equatable {
   ///   - operation: The Keychain operation that failed (e.g., `"store"`, `"delete"`).
   ///   - status: The `OSStatus` code returned by the Security framework.
   case keychainOperationFailed(operation: String, status: Int)
+
+  // MARK: - Phase 4: Cognitive Compression
+
+  /// A cognitive compression operation failed.
+  ///
+  /// This may occur when the LLM inference fails, the summary encryption
+  /// fails, or the atomic archive-and-prune transaction cannot be committed.
+  ///
+  /// - Parameter reason: A diagnostic description of the compression failure.
+  case compressionFailed(reason: String)
 }
 
 // MARK: - LocalizedError
@@ -129,6 +139,8 @@ extension AuraError: LocalizedError {
       return "[AuraKit] Key rotation failed: \(reason)"
     case .keychainOperationFailed(let operation, let status):
       return "[AuraKit] Keychain \(operation) failed with OSStatus \(status)"
+    case .compressionFailed(let reason):
+      return "[AuraKit] Compression failed: \(reason)"
     }
   }
 }
@@ -153,6 +165,7 @@ extension AuraError: CustomNSError {
     case .persistenceFailed: return 1_006
     case .keyRotationFailed: return 1_007
     case .keychainOperationFailed: return 1_008
+    case .compressionFailed: return 1_010
     }
   }
 }

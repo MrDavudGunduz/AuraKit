@@ -24,6 +24,7 @@ import os.signpost
 /// | `batchEncrypt`   | `EncryptedMemoryStore.batch`  | Batch encrypt + single save    |
 /// | `decrypt`        | `+Decryption.decryptNodes`    | Full-table or batch decrypt    |
 /// | `keyDerivation`  | `KeyManager.deriveKey`        | ECDH + HKDF key derivation     |
+/// | `compression`    | `IntelligenceActor.compress`  | Cognitive compression pass     |
 ///
 /// ## Thread Safety
 ///
@@ -126,5 +127,27 @@ public enum SignpostLogger {
   /// - Parameter signpostID: The ID returned by ``beginKeyDerivation()``.
   public static func endKeyDerivation(_ signpostID: OSSignpostID) {
     os_signpost(.end, log: log, name: "KeyDerivation", signpostID: signpostID)
+  }
+
+  // MARK: - Compression
+
+  /// Marks the beginning of a cognitive compression interval.
+  ///
+  /// - Parameter nodeCount: The number of nodes selected for compression (included as metadata).
+  /// - Returns: An `OSSignpostID` to pass to ``endCompression(_:)``.
+  public static func beginCompression(nodeCount: Int) -> OSSignpostID {
+    let signpostID = OSSignpostID(log: log)
+    os_signpost(
+      .begin, log: log, name: "Compression", signpostID: signpostID,
+      "nodeCount=%d", nodeCount
+    )
+    return signpostID
+  }
+
+  /// Marks the end of a cognitive compression interval.
+  ///
+  /// - Parameter signpostID: The ID returned by ``beginCompression(nodeCount:)``.
+  public static func endCompression(_ signpostID: OSSignpostID) {
+    os_signpost(.end, log: log, name: "Compression", signpostID: signpostID)
   }
 }
