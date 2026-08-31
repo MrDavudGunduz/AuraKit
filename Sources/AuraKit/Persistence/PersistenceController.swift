@@ -85,6 +85,7 @@ public struct PersistenceController: Sendable {
 
     let container = try ModelContainer(
       for: schema,
+      migrationPlan: AuraKitMigrationPlan.self,
       configurations: [configuration]
     )
 
@@ -139,6 +140,7 @@ public struct PersistenceController: Sendable {
 
     let container = try ModelContainer(
       for: schema,
+      migrationPlan: AuraKitMigrationPlan.self,
       configurations: [configuration]
     )
 

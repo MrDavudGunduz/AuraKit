@@ -50,9 +50,8 @@ public final class RawMemoryNode {
 
   /// Unique identifier for this memory node.
   ///
-  /// Enforced as unique at the SwiftData layer to prevent duplicate writes
-  /// from concurrent capture paths.
-  @Attribute(.unique)
+  /// Generated via `UUID()` to ensure universal uniqueness without requiring
+  /// `@Attribute(.unique)` constraints, maintaining full compatibility with CloudKit sync.
   public var id: UUID
 
   /// AES-GCM encrypted payload containing the serialised ``SpatialEvent``.

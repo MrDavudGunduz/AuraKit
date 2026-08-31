@@ -34,10 +34,10 @@ private enum MemoryArchiveNodeLog {
 /// below the configured threshold for a cluster of `RawMemoryNode` records,
 /// the LLM generates a natural-language summary, which is then:
 ///
-/// 1. Embedded as a vector (for Metal cosine similarity search)
+/// 1. Generated as a natural-language semantic summary by the LLM
 /// 2. Encrypted with AES-GCM
 /// 3. Persisted as a `MemoryArchiveNode`
-/// 4. Source `RawMemoryNode` records are deleted
+/// 4. Source `RawMemoryNode` records are deleted atomically
 ///
 /// ## Example Summary
 ///
@@ -59,11 +59,9 @@ public final class MemoryArchiveNode {
   // MARK: - Properties
 
   /// Unique identifier for this archive node.
-  @Attribute(.unique)
   public var id: UUID
 
-  /// AES-GCM encrypted summary containing the LLM-generated semantic text
-  /// and optional embedding vector.
+  /// AES-GCM encrypted summary containing the LLM-generated semantic text.
   ///
   /// Format: `nonce (12 bytes) || ciphertext || auth tag (16 bytes)`.
   public var encryptedSummary: Data
