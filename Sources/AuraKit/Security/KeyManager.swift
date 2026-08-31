@@ -217,19 +217,23 @@ public actor KeyManager {
   /// Persists the current key version to the Keychain.
   ///
   /// Called after each successful ``rotateKey()`` to ensure the version
-  /// counter survives app restarts. If the write fails, a fault-level log
-  /// is emitted but the rotation is **not** rolled back — the in-memory
-  /// version remains correct for the current session.
-  func persistKeyVersion() {
+  /// counter survives app restarts.
+  ///
+  /// - Throws: ``AuraError/keyRotationFailed(reason:)`` if Keychain persistence fails.
+  func persistKeyVersion() throws {
     let data = Data(String(_keyVersion).utf8)
-    let stored = KeychainHelper.store(
-      data: data,
-      service: KeyManager.keychainService,
-      account: KeyManager.keyVersionKeychainAccount
-    )
-    if !stored {
+    do {
+      try KeychainHelper.storeOrThrow(
+        data: data,
+        service: KeyManager.keychainService,
+        account: KeyManager.keyVersionKeychainAccount
+      )
+    } catch {
       KeyManager.logger.fault(
         "[AuraKit] KeyManager: Failed to persist keyVersion \(self._keyVersion) to Keychain."
+      )
+      throw AuraError.keyRotationFailed(
+        reason: "Failed to persist keyVersion \(_keyVersion) to Keychain: \(error.localizedDescription)"
       )
     }
   }

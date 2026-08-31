@@ -243,12 +243,15 @@ enum KeychainHelper {
   /// Throwing variant of ``delete(service:account:accessGroup:)`` that
   /// propagates the Security framework `OSStatus` via ``AuraError``.
   ///
+  /// This operation is **idempotent**: if the item does not exist (`errSecItemNotFound`),
+  /// the call succeeds without throwing, ensuring robust cleanup routines.
+  ///
   /// - Parameters:
   ///   - service: The Keychain service identifier.
   ///   - account: The Keychain account identifier.
   ///   - accessGroup: Optional Keychain access group for App Extension sharing.
   /// - Throws: ``AuraError/keychainOperationFailed(operation:status:)`` if
-  ///   `SecItemDelete` returns a non-success status.
+  ///   `SecItemDelete` returns an unexpected error status (other than success or not found).
   static func deleteOrThrow(
     service: String,
     account: String,
@@ -263,7 +266,7 @@ enum KeychainHelper {
       query[kSecAttrAccessGroup as String] = group
     }
     let status = SecItemDelete(query as CFDictionary)
-    guard status == errSecSuccess else {
+    guard status == errSecSuccess || status == errSecItemNotFound else {
       throw AuraError.keychainOperationFailed(
         operation: "delete",
         status: Int(status)

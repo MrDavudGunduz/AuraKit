@@ -133,15 +133,37 @@ struct KeychainHelperTests {
     KeychainHelper.delete(service: Self.testService, account: account)
   }
 
-  @Test("deleteOrThrow throws keychainOperationFailed for non-existent item")
-  func deleteOrThrowThrowsForNonExistent() {
+  @Test("deleteOrThrow succeeds idempotently for non-existent item")
+  func deleteOrThrowSucceedsForNonExistent() throws {
     let account = "non-existent-\(UUID())"
 
-    #expect(throws: AuraError.self) {
-      try KeychainHelper.deleteOrThrow(
-        service: Self.testService,
-        account: account
-      )
-    }
+    // Should not throw — idempotent behavior (errSecItemNotFound is treated as success)
+    try KeychainHelper.deleteOrThrow(
+      service: Self.testService,
+      account: account
+    )
+  }
+
+  @Test("deleteOrThrow successfully removes existing item")
+  func deleteOrThrowRemovesExisting() throws {
+    let account = "delete-throw-\(UUID())"
+    let data = Data("to-delete".utf8)
+
+    try KeychainHelper.storeOrThrow(
+      data: data,
+      service: Self.testService,
+      account: account
+    )
+
+    try KeychainHelper.deleteOrThrow(
+      service: Self.testService,
+      account: account
+    )
+
+    let retrieved = KeychainHelper.retrieve(
+      service: Self.testService,
+      account: account
+    )
+    #expect(retrieved == nil)
   }
 }

@@ -39,8 +39,10 @@ extension KeyManager {
   ///   derivation fails during rotation.
   @discardableResult
   public func rotateKey() throws -> SymmetricKey? {
-    // Preserve current key for migration
+    // Preserve current state for migration and fail-safe rollback
     let oldKey = cachedKey
+    let priorPreviousKey = _previousKey
+    let priorKeyVersion = _keyVersion
     _previousKey = oldKey
 
     do {
@@ -54,7 +56,7 @@ extension KeyManager {
       let newKey = try deriveKeyWithSalt(newSalt)
       cachedKey = newKey
       _keyVersion += 1
-      persistKeyVersion()
+      try persistKeyVersion()
 
       KeyManager.logger.info(
         "[AuraKit] KeyManager: Key rotated successfully. Version: \(self._keyVersion)."
@@ -62,14 +64,16 @@ extension KeyManager {
 
       return oldKey
     } catch let error as AuraError {
-      // Restore the old key if rotation fails — fail-safe
+      // Restore full previous state if rotation fails — fail-safe rollback
       cachedKey = oldKey
-      _previousKey = nil
+      _previousKey = priorPreviousKey
+      _keyVersion = priorKeyVersion
       throw error
     } catch {
-      // Restore the old key if rotation fails — fail-safe
+      // Restore full previous state if rotation fails — fail-safe rollback
       cachedKey = oldKey
-      _previousKey = nil
+      _previousKey = priorPreviousKey
+      _keyVersion = priorKeyVersion
       throw AuraError.keyRotationFailed(
         reason: "Key rotation failed: \(error.localizedDescription)"
       )

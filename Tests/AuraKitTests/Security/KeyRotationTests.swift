@@ -188,4 +188,22 @@ struct KeyRotationTests {
     #expect(keysAreEqual(previousAfterSecond!, keyAfterFirstRotation))
     #expect(!keysAreEqual(previousAfterSecond!, original))
   }
+
+  // MARK: - State Invariants & Rollback
+
+  @Test("KeyManager maintains keyVersion consistency across rotations")
+  func keyVersionConsistencyAcrossRotations() async throws {
+    let original = makeStaticKey()
+    let manager = KeyManager(staticKey: original)
+    _ = try await manager.symmetricKey()
+
+    let initialVersion = await manager.keyVersion
+    #expect(initialVersion == 0)
+
+    _ = try await manager.rotateKey()
+    #expect(await manager.keyVersion == 1)
+
+    _ = try await manager.rotateKey()
+    #expect(await manager.keyVersion == 2)
+  }
 }

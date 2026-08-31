@@ -93,9 +93,9 @@ public enum AuraError: Error, Sendable, Equatable {
   /// A Keychain operation (store, delete, or retrieve) failed with a specific
   /// Security framework error code.
   ///
-  /// This provides richer diagnostic context than the legacy `Bool`-returning
-  /// `KeychainHelper` methods, enabling precise failure analysis in production
-  /// telemetry (e.g., `errSecDuplicateItem`, `errSecItemNotFound`).
+  /// This provides richer diagnostic context than the non-throwing `Bool`-returning
+  /// `KeychainHelper` convenience methods, enabling precise failure analysis in production
+  /// telemetry (e.g., `errSecDuplicateItem`).
   ///
   /// - Parameters:
   ///   - operation: The Keychain operation that failed (e.g., `"store"`, `"delete"`).
