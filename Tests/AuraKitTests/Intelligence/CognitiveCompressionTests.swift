@@ -194,4 +194,53 @@ struct CognitiveCompressionTests {
     #expect(await store.count == 0)
     #expect(await store.archiveNodeCount == 1)
   }
+
+  @Test("Cognitive compression telemetry stream does not leak plaintext summary")
+  func telemetryStreamSanitization() async throws {
+    let store = try makeTestEncryptedStore(saveThreshold: 1)
+    let config = AuraConfiguration(
+      capture: try CaptureConfiguration(interactionWeight: 1.0, gazeWeight: 0.3, bufferCapacity: 512),
+      storage: try StorageConfiguration(
+        capacity: 1000,
+        streamBatchSize: 100,
+        largeDatasetWarningThreshold: 1000,
+        saveThreshold: 1,
+        retryQueueCapacity: 10
+      ),
+      intelligence: try IntelligenceConfiguration(
+        decayConstant: 0.0001,
+        recallMultiplier: 1.2,
+        survivalIndexThreshold: 0.5
+      )
+    )
+    let secretSummary = "Highly sensitive user secret text that must not leak into telemetry stream."
+    let mockProvider = MockMLXModelProvider(mockResponse: secretSummary)
+    let intelligence = IntelligenceActor(config: config, store: store, modelProvider: mockProvider)
+
+    let event = SpatialEvent.gazeFixture(score: 0.1)
+    await store.append(event)
+
+    let stream = await intelligence.compressionEventStream
+
+    let collectTask = Task<[MemoryCompressionEvent], Never> {
+      var events: [MemoryCompressionEvent] = []
+      for await compressionEvent in stream {
+        events.append(compressionEvent)
+        if compressionEvent.phase == .completed {
+          break
+        }
+      }
+      return events
+    }
+
+    _ = try await intelligence.compressIdleMemories()
+    let collectedEvents = await collectTask.value
+
+    let summaryEvents = collectedEvents.filter { $0.phase == .summaryGenerated }
+    #expect(summaryEvents.count == 1)
+    if let summaryEvent = summaryEvents.first {
+      #expect(!summaryEvent.detail.contains(secretSummary))
+      #expect(summaryEvent.detail == "Summary generated (\(secretSummary.count) characters).")
+    }
+  }
 }

@@ -2,6 +2,7 @@
 // AuraKit — Intelligence & Manifest Parsing
 
 import Foundation
+import os.log
 
 /// Represents an event score entry returned by the on-device LLM.
 public struct ScoredManifestEntry: Codable, Sendable {
@@ -15,7 +16,12 @@ public struct LLMResponseManifest: Codable, Sendable {
 }
 
 /// Parses scored manifests returned by the on-device LLM.
-public struct SurvivalIndexParser: Sendable {
+public enum SurvivalIndexParser {
+
+  private static let logger = Logger(
+    subsystem: AuraKitConstants.subsystem,
+    category: "SurvivalIndexParser"
+  )
 
   /// Parses raw LLM output text into a map of Event UUID -> Updated Score.
   ///
@@ -25,11 +31,13 @@ public struct SurvivalIndexParser: Sendable {
   /// - Returns: Dictionary mapping event ID to updated initial score ($S_0$).
   public static func parse(_ rawOutput: String, referencing fallbackEvents: [SpatialEvent]) -> [UUID: Double] {
     guard let data = rawOutput.data(using: .utf8) else {
+      Self.logger.debug("[AuraKit] SurvivalIndexParser: Raw LLM output could not be converted to UTF-8 data. Using fallback scores.")
       return defaultScores(for: fallbackEvents)
     }
 
     let decoder = JSONDecoder()
-    if let container = try? decoder.decode(LLMResponseManifest.self, from: data) {
+    do {
+      let container = try decoder.decode(LLMResponseManifest.self, from: data)
       var result: [UUID: Double] = [:]
       for entry in container.manifest {
         if let uuid = UUID(uuidString: entry.id) {
@@ -43,9 +51,10 @@ public struct SurvivalIndexParser: Sendable {
         }
       }
       return result
+    } catch {
+      Self.logger.debug("[AuraKit] SurvivalIndexParser: Failed to decode LLM response manifest (\(error.localizedDescription)). Using fallback scores.")
+      return defaultScores(for: fallbackEvents)
     }
-
-    return defaultScores(for: fallbackEvents)
   }
 
   private static func defaultScores(for events: [SpatialEvent]) -> [UUID: Double] {

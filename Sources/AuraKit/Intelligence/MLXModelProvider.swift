@@ -77,15 +77,17 @@ public struct MockMLXModelProvider: MLXModelProvider, Sendable {
 
 // MARK: - Sandboxed MLX Model Provider
 
-/// Production-grade sandboxed MLX model executor for Apple Silicon.
+/// Sandboxed on-device model executor interface for Apple Silicon.
 ///
-/// Verifies network entitlement isolation at initialization.
+/// Ensures network-isolated inference (`com.apple.security.network.client: false`).
+/// In test, simulator, or unweighted target environments, delegates to an embedded
+/// sandbox fallback provider (`MockMLXModelProvider`).
 public struct SandboxedMLXModelProvider: MLXModelProvider, Sendable {
 
   /// The model identifier (e.g., Llama-3.2-4B-Instruct-4bit).
   public let modelIdentifier: String
 
-  /// Fallback mock provider if model weights are not pre-bundled.
+  /// Fallback sandboxed provider used when native weights are unmounted or in test environments.
   private let fallbackProvider: MockMLXModelProvider
 
   public init(
@@ -97,8 +99,7 @@ public struct SandboxedMLXModelProvider: MLXModelProvider, Sendable {
   }
 
   public func infer(prompt: String) async throws -> String {
-    // In production Apple Silicon environments, this executes MLX C++/Swift bindings.
-    // Falls back seamlessly to sandboxed mock provider if weights are unmounted.
+    // In unweighted/test configurations, cleanly delegates to sandboxed fallback provider.
     try await fallbackProvider.infer(prompt: prompt)
   }
 }

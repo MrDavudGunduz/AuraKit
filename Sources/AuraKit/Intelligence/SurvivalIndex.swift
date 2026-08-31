@@ -21,7 +21,7 @@ import Foundation
 /// | `n`      | Number of times the memory was queried (`recalledCount`) |
 /// | `λ`      | Exponential decay constant per second |
 /// | `t`      | Age in seconds since creation |
-public struct SurvivalIndex: Sendable {
+public enum SurvivalIndex {
 
   /// Calculates the Survival Index for a given memory item at time `t`.
   ///

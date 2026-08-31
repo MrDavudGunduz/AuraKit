@@ -2,9 +2,15 @@
 // AuraKit — Intelligence & Serialization
 
 import Foundation
+import os.log
 
 /// Constructs token-efficient JSON prompts from batches of spatial events for LLM evaluation.
-public struct BatchPromptBuilder: Sendable {
+public enum BatchPromptBuilder {
+
+  private static let logger = Logger(
+    subsystem: AuraKitConstants.subsystem,
+    category: "BatchPromptBuilder"
+  )
 
   /// Compact JSON representation of a spatial event for LLM scoring.
   public struct EventPayload: Codable, Sendable {
@@ -27,7 +33,7 @@ public struct BatchPromptBuilder: Sendable {
     let payloads = events.map { event in
       EventPayload(
         id: event.id.uuidString,
-        kind: String(describing: event.kind),
+        kind: event.kind.eventType.rawValue,
         score: event.score,
         timestamp: event.timestamp.timeIntervalSince1970
       )
@@ -37,11 +43,16 @@ public struct BatchPromptBuilder: Sendable {
     let encoder = JSONEncoder()
     // We avoid .sortedKeys as it incurs a massive performance penalty.
 
-    if let data = try? encoder.encode(batch),
-       let jsonString = String(data: data, encoding: .utf8) {
+    do {
+      let data = try encoder.encode(batch)
+      guard let jsonString = String(data: data, encoding: .utf8) else {
+        Self.logger.error("[AuraKit] BatchPromptBuilder: Failed to decode UTF-8 string from encoded JSON data.")
+        return "{\"events\":[]}"
+      }
       return jsonString
+    } catch {
+      Self.logger.error("[AuraKit] BatchPromptBuilder: Failed to encode batch JSON payload — \(error.localizedDescription)")
+      return "{\"events\":[]}"
     }
-
-    return "{\"events\":[]}"
   }
 }

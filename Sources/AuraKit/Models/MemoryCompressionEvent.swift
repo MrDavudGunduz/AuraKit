@@ -84,7 +84,7 @@ public struct MemoryCompressionEvent: Sendable, Equatable {
   ///
   /// Examples:
   /// - `"Selected 1,000 nodes below SI threshold 0.15"`
-  /// - `"Summary: User inspected the southeast exhibit case..."`
+  /// - `"Summary generated (48 characters)."`
   /// - `"Compression failed: Encryption service unavailable"`
   public let detail: String
 

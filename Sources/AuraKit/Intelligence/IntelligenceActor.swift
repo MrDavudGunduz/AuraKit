@@ -210,23 +210,15 @@ public actor IntelligenceActor {
     emitCompressionEvent(.started, detail: "Compression operation started.")
 
     let encryptedStore = try validateEncryptedStore()
-    let signpostID = SignpostLogger.beginCompression(nodeCount: 0)
-
     let threshold = config.intelligence.survivalIndexThreshold
     let snapshots = await encryptedStore.fetchNodesBelowThreshold(threshold)
 
     guard !snapshots.isEmpty else {
-      SignpostLogger.endCompression(signpostID)
       emitCompressionEvent(.completed, detail: "No nodes below SI threshold \(threshold). Nothing to compress.")
-      return CompressionReport(
-        nodesPruned: 0,
-        archiveNodesCreated: 0,
-        bytesRecovered: 0,
-        summary: "",
-        archiveNodeID: nil,
-        duration: startTime.duration(to: ContinuousClock.now)
-      )
+      return .empty
     }
+
+    let signpostID = SignpostLogger.beginCompression(nodeCount: snapshots.count)
 
     emitCompressionEvent(.nodesSelected, detail: "Selected \(snapshots.count) nodes below SI threshold \(threshold).")
     Self.logger.info("[AuraKit] IntelligenceActor: Compression — \(snapshots.count) nodes selected below SI \(threshold).")
@@ -287,7 +279,7 @@ public actor IntelligenceActor {
     let prompt = ConsolidationPromptBuilder.build(from: snapshots)
     do {
       let summaryText = try await modelProvider.infer(prompt: prompt)
-      emitCompressionEvent(.summaryGenerated, detail: "Summary: \(summaryText.prefix(100))")
+      emitCompressionEvent(.summaryGenerated, detail: "Summary generated (\(summaryText.count) characters).")
       return summaryText
     } catch {
       SignpostLogger.endCompression(signpostID)

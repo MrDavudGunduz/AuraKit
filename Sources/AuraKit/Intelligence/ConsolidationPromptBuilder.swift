@@ -7,6 +7,7 @@
 // in one sentence.
 
 import Foundation
+import os.log
 
 // MARK: - ConsolidationPromptBuilder
 
@@ -34,6 +35,11 @@ import Foundation
 /// `ConsolidationPromptBuilder` is a stateless `enum` — fully `Sendable` and
 /// safe to call from any actor or task without synchronisation.
 public enum ConsolidationPromptBuilder {
+
+  private static let logger = Logger(
+    subsystem: AuraKitConstants.subsystem,
+    category: "ConsolidationPromptBuilder"
+  )
 
   // MARK: - Internal Payload Types
 
@@ -79,11 +85,16 @@ public enum ConsolidationPromptBuilder {
 
     let encoder = JSONEncoder()
 
-    if let data = try? encoder.encode(consolidation),
-       let jsonString = String(data: data, encoding: .utf8) {
+    do {
+      let data = try encoder.encode(consolidation)
+      guard let jsonString = String(data: data, encoding: .utf8) else {
+        Self.logger.error("[AuraKit] ConsolidationPromptBuilder: Failed to decode UTF-8 string from encoded JSON data.")
+        return "{\"task\":\"consolidate\",\"instruction\":\"Summarize the key spatial events in one sentence.\",\"events\":[]}"
+      }
       return jsonString
+    } catch {
+      Self.logger.error("[AuraKit] ConsolidationPromptBuilder: Failed to encode consolidation JSON payload — \(error.localizedDescription)")
+      return "{\"task\":\"consolidate\",\"instruction\":\"Summarize the key spatial events in one sentence.\",\"events\":[]}"
     }
-
-    return "{\"task\":\"consolidate\",\"instruction\":\"Summarize the key spatial events in one sentence.\",\"events\":[]}"
   }
 }
