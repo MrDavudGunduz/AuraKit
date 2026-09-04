@@ -136,6 +136,16 @@ extension EncryptedMemoryStore {
     }
   }
 
+  /// Maximum number of concurrent decryption tasks per batch.
+  ///
+  /// Adapts to the device's processor count to avoid oversubscription on
+  /// low-core devices (e.g., Apple Watch, older iPhones) while maintaining
+  /// high throughput on multi-core devices (e.g., M-series iPads/Macs).
+  ///
+  /// Capped at 4 to prevent excessive memory pressure from concurrent
+  /// AES-GCM operations on large payloads.
+  private static let maxConcurrentDecryption = min(4, ProcessInfo.processInfo.activeProcessorCount)
+
   // MARK: - Actor-Isolated Batch Fetch
 
   /// Fetches and decrypts a single batch of nodes within the actor's isolation domain.
@@ -144,6 +154,16 @@ extension EncryptedMemoryStore {
   /// the actor-isolated `ModelContext`. By keeping all `modelContext` access
   /// within this method, we guarantee that the non-Sendable `ModelContext`
   /// never escapes the actor's isolation boundary.
+  ///
+  /// ## Parallel Decryption
+  ///
+  /// Decryption is performed in parallel using a `ThrowingTaskGroup` with a
+  /// sliding-window concurrency limit of ``maxConcurrentDecryption``. This
+  /// prevents spawning unbounded child tasks for large batches while keeping
+  /// all available cores busy.
+  ///
+  /// Results are collected as `(index, event)` tuples and sorted by the
+  /// original index to preserve chronological order.
   ///
   /// - Parameters:
   ///   - offset: The fetch offset for this batch.
@@ -154,40 +174,82 @@ extension EncryptedMemoryStore {
     offset: Int,
     limit: Int,
     key: SymmetricKey
-  ) -> [SpatialEvent]? {
+  ) async -> [SpatialEvent]? {
     do {
-      var descriptor = FetchDescriptor<RawMemoryNode>(
-        sortBy: [SortDescriptor(\.timestamp, order: .forward)]
-      )
-      descriptor.fetchLimit = limit
-      descriptor.fetchOffset = offset
+        var descriptor = FetchDescriptor<RawMemoryNode>(
+            sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+        )
+        descriptor.fetchLimit = limit
+        descriptor.fetchOffset = offset
 
-      let nodes = try modelContext.fetch(descriptor)
-      guard !nodes.isEmpty else { return nil }
+        let nodes = try modelContext.fetch(descriptor)
+        guard !nodes.isEmpty else { return nil }
 
-      var events: [SpatialEvent] = []
-      events.reserveCapacity(nodes.count)
+        // Capture encrypted payloads before entering the task group.
+        // RawMemoryNode may not be Sendable, but Data is.
+        let payloads: [(Int, Data)] = nodes.enumerated().map { ($0.offset, $0.element.encryptedPayload) }
 
-      for node in nodes {
+        // Parallel decryption with bounded concurrency.
+        // Uses a sliding-window pattern: enqueue up to `maxConcurrent` tasks,
+        // then wait for one to complete before enqueuing the next.
+        let maxConcurrent = Self.maxConcurrentDecryption
+        let service = encryptionService
+        let jsonDecoder = decoder
+        var decryptedTuples: [(Int, SpatialEvent)] = []
+        decryptedTuples.reserveCapacity(payloads.count)
+
         do {
-          let plaintext = try encryptionService.decrypt(node.encryptedPayload, using: key)
-          let event = try decoder.decode(SpatialEvent.self, from: plaintext)
-          events.append(event)
-        } catch {
-          incrementDecryptionFailure()
-          Self.logger.error(
-            "[AuraKit] EncryptedMemoryStore: Stream decrypt failed for node \(node.id) — \(error.localizedDescription)"
-          )
-          // Continue to next node — don't terminate the stream
-        }
-      }
+            try await withThrowingTaskGroup(of: (Int, SpatialEvent).self) { group in
+                var nextIndex = 0
+                var inFlight = 0
 
-      return events
+                // Seed the group with initial tasks up to the concurrency limit.
+                while nextIndex < payloads.count, inFlight < maxConcurrent {
+                    let (index, payload) = payloads[nextIndex]
+                    group.addTask {
+                        let plaintext = try service.decrypt(payload, using: key)
+                        let event = try jsonDecoder.decode(SpatialEvent.self, from: plaintext)
+                        return (index, event)
+                    }
+                    nextIndex += 1
+                    inFlight += 1
+                }
+
+                // As each task completes, collect its result and enqueue the next.
+                for try await tuple in group {
+                    decryptedTuples.append(tuple)
+                    inFlight -= 1
+
+                    if nextIndex < payloads.count {
+                        let (index, payload) = payloads[nextIndex]
+                        group.addTask {
+                            let plaintext = try service.decrypt(payload, using: key)
+                            let event = try jsonDecoder.decode(SpatialEvent.self, from: plaintext)
+                            return (index, event)
+                        }
+                        nextIndex += 1
+                        inFlight += 1
+                    }
+                }
+            }
+        } catch {
+            // Any decryption error aborts the batch.
+            incrementDecryptionFailure()
+            Self.logger.error("[AuraKit] EncryptedMemoryStore: Stream batch decryption failed — \(error.localizedDescription)")
+            return nil
+        }
+
+        // Restore original chronological order.
+        let sortedEvents = decryptedTuples
+            .sorted { $0.0 < $1.0 }
+            .map { $0.1 }
+
+        return sortedEvents
     } catch {
-      Self.logger.error(
-        "[AuraKit] EncryptedMemoryStore: Stream batch fetch failed at offset \(offset) — \(error.localizedDescription)"
-      )
-      return nil
+        Self.logger.error(
+            "[AuraKit] EncryptedMemoryStore: Stream batch fetch failed at offset \(offset) — \(error.localizedDescription)"
+        )
+        return nil
     }
   }
 }
