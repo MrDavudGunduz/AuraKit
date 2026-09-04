@@ -7,6 +7,7 @@
 // Rotation    → KeyManager+Rotation.swift
 // Derivation  → KeyManager+Derivation.swift
 // Salt mgmt   → KeyManager+Salt.swift
+// Keychain    → KeyManager+Keychain.swift
 
 import CryptoKit
 import Foundation
@@ -66,6 +67,7 @@ import os.log
 /// | `KeyManager+Rotation.swift`   | Key rotation lifecycle and migration API    |
 /// | `KeyManager+Derivation.swift` | ECDH derivation (Secure Enclave + fallback) |
 /// | `KeyManager+Salt.swift`       | HKDF salt generation and persistence        |
+/// | `KeyManager+Keychain.swift`   | Symmetric key Keychain persistence          |
 public actor KeyManager {
 
   // MARK: - Internal Logger
@@ -95,6 +97,10 @@ public actor KeyManager {
   /// would break partial re-encryption migration logic that relies on
   /// matching `RawMemoryNode.keyVersion` against the current version.
   static let keyVersionKeychainAccount = "key-version"
+
+  /// Keychain account identifier for the persisted symmetric key.
+  /// Stored as raw key data (32 bytes) under the same service.
+  static let symmetricKeyKeychainAccount = "symmetric-key"
 
   /// HKDF shared info — domain separation for AuraKit v1 key derivation.
   static let hkdfSharedInfo = Data("AuraKit.v1".utf8)
@@ -166,9 +172,18 @@ public actor KeyManager {
       return cached
     }
 
+    // Attempt to load persisted key from Keychain
+    if let storedKey = try retrieveSymmetricKeyFromKeychain() {
+      cachedKey = storedKey
+      KeyManager.logger.info("[AuraKit] KeyManager: Loaded symmetric key from Keychain.")
+      return storedKey
+    }
+
+    // Derive new key and persist it
     let key = try deriveKey()
     cachedKey = key
-    KeyManager.logger.info("[AuraKit] KeyManager: Symmetric key derived successfully.")
+    try storeSymmetricKeyInKeychain(key)
+    KeyManager.logger.info("[AuraKit] KeyManager: Symmetric key derived and persisted to Keychain.")
     return key
   }
 

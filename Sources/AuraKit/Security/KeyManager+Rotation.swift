@@ -46,6 +46,11 @@ extension KeyManager {
     _previousKey = oldKey
 
     do {
+      // Invalidate the persisted symmetric key before rotation.
+      // This ensures a stale key is never loaded from Keychain if the
+      // process is terminated between salt replacement and key persistence.
+      try invalidateStoredSymmetricKey()
+
       // Generate a fresh salt, replacing the old one in Keychain
       let newSalt = try generateAndStoreSalt()
 
@@ -58,6 +63,10 @@ extension KeyManager {
       _keyVersion += 1
       try persistKeyVersion()
 
+      // Persist the newly derived key to Keychain for fast retrieval
+      // on subsequent app launches.
+      try storeSymmetricKeyInKeychain(newKey)
+
       KeyManager.logger.info(
         "[AuraKit] KeyManager: Key rotated successfully. Version: \(self._keyVersion)."
       )
@@ -68,12 +77,22 @@ extension KeyManager {
       cachedKey = oldKey
       _previousKey = priorPreviousKey
       _keyVersion = priorKeyVersion
+
+      // Attempt to re-persist the old key on rollback (best-effort).
+      if let oldKey {
+        try? storeSymmetricKeyInKeychain(oldKey)
+      }
       throw error
     } catch {
       // Restore full previous state if rotation fails — fail-safe rollback
       cachedKey = oldKey
       _previousKey = priorPreviousKey
       _keyVersion = priorKeyVersion
+
+      // Attempt to re-persist the old key on rollback (best-effort).
+      if let oldKey {
+        try? storeSymmetricKeyInKeychain(oldKey)
+      }
       throw AuraError.keyRotationFailed(
         reason: "Key rotation failed: \(error.localizedDescription)"
       )
