@@ -85,7 +85,7 @@ extension AuraKit {
     shared.configureIfNeeded(with: config, store: store)
   }
 
-  /// Convenience static wrapper for ``memory``.
+  /// Convenience static wrapper for ``memory``\.
   ///
   /// Provides access to the memory management API for cognitive compression:
   ///
@@ -97,4 +97,43 @@ extension AuraKit {
   public static var memory: MemoryManager {
     get throws { try shared.memory }
   }
+
+  /// Convenience static wrapper for ``MemoryManager/searchSimilarMemories(queryVector:vectors:ids:topK:config:)``.
+  ///
+  /// Performs GPU-accelerated cosine similarity search:
+  ///
+  /// ```swift
+  /// let results = try await AuraKit.searchSimilarMemories(
+  ///     queryVector: embedding,
+  ///     vectors: storedVectors,
+  ///     ids: storedIDs,
+  ///     topK: 5
+  /// )
+  /// ```
+  ///
+  /// - Parameters:
+  ///   - queryVector: The embedding vector to search for.
+  ///   - vectors: The stored memory embedding vectors.
+  ///   - ids: The UUIDs corresponding to each vector.
+  ///   - topK: Maximum number of results. Default: `10`.
+  ///   - config: Metal search configuration. Default: ``MetalSearchConfiguration/default``.
+  /// - Returns: An array of ``VectorSearchResult`` sorted by descending similarity.
+  /// - Throws: ``AuraError/notConfigured``, ``AuraError/metalUnavailable(reason:)``,
+  ///   or ``AuraError/vectorSearchFailed(reason:)``.
+  public static func searchSimilarMemories(
+    queryVector: [Float],
+    vectors: [[Float]],
+    ids: [UUID],
+    topK: Int = 10,
+    config: MetalSearchConfiguration = .default
+  ) async throws -> [VectorSearchResult] {
+    try await memory.searchSimilarMemories(
+      queryVector: queryVector,
+      vectors: vectors,
+      ids: ids,
+      topK: topK,
+      config: config
+    )
+  }
 }
+
