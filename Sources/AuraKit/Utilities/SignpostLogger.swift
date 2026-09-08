@@ -150,4 +150,26 @@ public enum SignpostLogger {
   public static func endCompression(_ signpostID: OSSignpostID) {
     os_signpost(.end, log: log, name: "Compression", signpostID: signpostID)
   }
+
+  // MARK: - Metal Search
+
+  /// Marks the beginning of a Metal GPU cosine similarity search interval.
+  ///
+  /// - Parameter vectorCount: The number of vectors being searched (included as metadata).
+  /// - Returns: An `OSSignpostID` to pass to ``endMetalSearch(_:)``.
+  public static func beginMetalSearch(vectorCount: Int) -> OSSignpostID {
+    let signpostID = OSSignpostID(log: log)
+    os_signpost(
+      .begin, log: log, name: "MetalSearch", signpostID: signpostID,
+      "vectorCount=%d", vectorCount
+    )
+    return signpostID
+  }
+
+  /// Marks the end of a Metal GPU cosine similarity search interval.
+  ///
+  /// - Parameter signpostID: The ID returned by ``beginMetalSearch(vectorCount:)``.
+  public static func endMetalSearch(_ signpostID: OSSignpostID) {
+    os_signpost(.end, log: log, name: "MetalSearch", signpostID: signpostID)
+  }
 }
