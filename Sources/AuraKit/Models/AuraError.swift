@@ -5,6 +5,7 @@
 // Phase 1: notConfigured, invalidConfiguration, alreadyConfigured
 // Phase 2: encryptionFailed, decryptionFailed, secureEnclaveUnavailable, persistenceFailed
 // Phase 2.1: keyRotationFailed
+// Phase 5: metalUnavailable, vectorSearchFailed
 
 import Foundation
 
@@ -111,6 +112,25 @@ public enum AuraError: Error, Sendable, Equatable {
   ///
   /// - Parameter reason: A diagnostic description of the compression failure.
   case compressionFailed(reason: String)
+
+  // MARK: - Phase 5: Metal Search
+
+  /// The Metal GPU compute pipeline is unavailable.
+  ///
+  /// This occurs when the device lacks a Metal-compatible GPU, when the
+  /// Metal shader library cannot be loaded, or when running on a platform
+  /// where Metal is not supported (e.g., Linux CI).
+  ///
+  /// - Parameter reason: A diagnostic description of why Metal is unavailable.
+  case metalUnavailable(reason: String)
+
+  /// A GPU-accelerated vector similarity search failed.
+  ///
+  /// This may occur when vector dimensions are mismatched, when Metal buffer
+  /// allocation fails, or when the GPU compute command encounters an error.
+  ///
+  /// - Parameter reason: A diagnostic description of the search failure.
+  case vectorSearchFailed(reason: String)
 }
 
 // MARK: - LocalizedError
@@ -141,6 +161,10 @@ extension AuraError: LocalizedError {
       return "[AuraKit] Keychain \(operation) failed with OSStatus \(status)"
     case .compressionFailed(let reason):
       return "[AuraKit] Compression failed: \(reason)"
+    case .metalUnavailable(let reason):
+      return "[AuraKit] Metal unavailable: \(reason)"
+    case .vectorSearchFailed(let reason):
+      return "[AuraKit] Vector search failed: \(reason)"
     }
   }
 }
@@ -166,6 +190,8 @@ extension AuraError: CustomNSError {
     case .keyRotationFailed: return 1_007
     case .keychainOperationFailed: return 1_008
     case .compressionFailed: return 1_010
+    case .metalUnavailable: return 1_011
+    case .vectorSearchFailed: return 1_012
     }
   }
 }
