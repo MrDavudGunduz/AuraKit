@@ -113,6 +113,14 @@ import os.log
 // - ``IntelligenceActor``
 // - ``SurvivalIndex``
 // - ``MLXModelProvider``
+// - ``MemoryManager``
+// - ``CompressionReport``
+// - ``MemoryCompressionEvent``
+//
+// ### Metal Search
+// - ``MetalSearchEngine``
+// - ``VectorSearchResult``
+// - ``MetalSearchConfiguration``
 //
 // ### Errors
 // - ``AuraError``

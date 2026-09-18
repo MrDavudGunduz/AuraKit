@@ -58,10 +58,12 @@ AuraKit follows a **Zero-Trust, Privacy-First** philosophy:
 
 - <doc:GettingStarted>
 - <doc:SecurityArchitecture>
+- <doc:MetalSearchGuide>
 
 ### Configuration
 
 - ``AuraConfiguration``
+- ``MetalSearchConfiguration``
 
 ### Capture Pipeline
 
@@ -96,6 +98,23 @@ AuraKit follows a **Zero-Trust, Privacy-First** philosophy:
 - ``KeyManager``
 - ``EncryptionService``
 
+### Intelligence
+
+- ``IntelligenceActor``
+- ``SurvivalIndex``
+- ``MLXModelProvider``
+
+### Memory Management
+
+- ``MemoryManager``
+- ``CompressionReport``
+- ``MemoryCompressionEvent``
+
+### Metal Search
+
+- ``MetalSearchEngine``
+- ``VectorSearchResult``
+
 ### Utilities
 
 - ``SignpostLogger``
@@ -104,3 +123,4 @@ AuraKit follows a **Zero-Trust, Privacy-First** philosophy:
 ### Errors
 
 - ``AuraError``
+

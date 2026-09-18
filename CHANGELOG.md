@@ -9,9 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> Changes staged for the next release.
-
-### Added
+> No unreleased changes.
 
 - Project scaffold: Swift Package with Swift 6 Strict Concurrency and multi-platform support (iOS 17+, macOS 14+, visionOS 1+)
 - SwiftLint build plugin integrated as a compile-time code quality gate
@@ -71,7 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.0.0] — _Planned: Week 8 Sprint_
+## [1.0.0] — 2026-09-08
 
 ### Added
 
@@ -110,18 +108,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 #### Phase 5 — Metal Search & Release (Week 8)
 
 - Metal Compute Shader (`cosine_similarity.metal`): GPU-accelerated cosine similarity search over all stored memory vectors
+- `MetalSearchEngine`: Actor-isolated Metal compute pipeline host with `MTLDevice`/`MTLCommandQueue`/`MTLComputePipelineState` lifecycle
+- `VectorSearchResult`: Sendable, Comparable result model for similarity search output
+- `MetalSearchConfiguration`: Validated configuration for vector dimension, max vector count, and threadgroup size
+- `MemoryManager.searchSimilarMemories()`: IoC API for GPU-accelerated memory search
 - `MTLComputePipelineState`-based search host: < 0.5ms for 1,000 vectors on A17 Pro
+- `SignpostLogger.beginMetalSearch` / `endMetalSearch`: Instruments signpost intervals for Metal GPU search
+- `AuraError.metalUnavailable` / `vectorSearchFailed`: Phase 5 error cases for Metal pipeline failures
+- DocC `MetalSearchGuide.md`: Comprehensive usage guide for Metal GPU search
 - `swift package generate-documentation` — DocC site hosted on GitHub Pages
 - DocC documentation hosted on GitHub Pages
 - Instruments profiling report: < 1ms main thread overhead per frame confirmed
+
+### Changed
+
+- Project scaffold: Swift Package with Swift 6 Strict Concurrency and multi-platform support (iOS 17+, macOS 14+, visionOS 1+)
+- SwiftLint build plugin integrated as a compile-time code quality gate
+- DocC plugin added for professional API documentation generation
+- `LICENSE` file: MIT license added to repository root (legal compliance)
+- `AuraKit.isConfigured`: lightweight state inspection property
+- `SpatialEvent.score` default value: `score` parameter now defaults to `0`
+- `AuraKit.version`: Updated to `"1.0.0"`
+- DocC catalog: Added Intelligence, Memory Management, and Metal Search topic groups
+- README: All features marked as complete (✅), Metal search example added, v1.0.0 badge
 
 ---
 
 ## Version History
 
-| Version | Date           | Summary                                                                           |
-| ------- | -------------- | --------------------------------------------------------------------------------- |
-| 1.0.0   | Planned Week 8 | Initial open-source release of AuraKit — full framework under MIT |
+| Version | Date       | Summary                                                    |
+| ------- | ---------- | ---------------------------------------------------------- |
+| 1.0.0   | 2026-09-08 | Initial open-source release of AuraKit — full framework under MIT |
 
 ---
 

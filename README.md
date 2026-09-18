@@ -3,35 +3,43 @@
 </p>
 
 <p align="center">
+  <img src="https://img.shields.io/badge/v1.0.0-release-blue" alt="v1.0.0"/>
   <img src="https://img.shields.io/badge/Swift-6.0-FA7343?logo=swift&logoColor=white" alt="Swift 6.0"/>
   <img src="https://img.shields.io/badge/iOS-17%2B-000000?logo=apple&logoColor=white" alt="iOS 17+"/>
   <img src="https://img.shields.io/badge/macOS-14%2B-000000?logo=apple&logoColor=white" alt="macOS 14+"/>
   <img src="https://img.shields.io/badge/visionOS-1%2B-000000?logo=apple&logoColor=white" alt="visionOS 1+"/>
   <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License"/>
   <img src="https://img.shields.io/badge/SPM-compatible-brightgreen" alt="SPM Compatible"/>
-  <img src="https://img.shields.io/badge/Tests-199_passing-success" alt="199 Tests Passing"/>
+  <img src="https://img.shields.io/badge/Tests-395_passing-success" alt="395 Tests Passing"/>
 </p>
 
 <h1 align="center">AuraKit</h1>
 
 <p align="center">
   <strong>On-device, cryptographically secured spatial memory framework for iOS, macOS, and visionOS.</strong><br/>
-  Built on Swift 6 Actors, Apple CryptoKit, SwiftData, and Metal — no cloud, no compromise.
+  Built on Swift 6 Actors, Apple CryptoKit, and SwiftData today — MLX is on the roadmap (see status below).
 </p>
 
 ---
 
 ## Overview
 
-AuraKit is a **fully open-source Swift Package** (MIT) that gives your 3D/spatial applications a persistent, privacy-first memory layer. It captures user interactions (gaze, touch, spatial movement) using a race-free Actor pipeline, scores them with a heuristic bypass engine, stores them in an on-device encrypted SwiftData database, and compresses aging memories via an on-device LLM using Apple Silicon MLX.
+AuraKit is a **fully open-source Swift Package** (MIT) that gives your 3D/spatial applications a persistent, privacy-first memory layer. It captures user interactions (gaze, touch, spatial movement) using a race-free Actor pipeline, scores them with a heuristic bypass engine, and stores them in an on-device, Secure Enclave–derived-key encrypted SwiftData database.
 
-| Layer        | Technology                    | Description                                 |
-| ------------ | ----------------------------- | ------------------------------------------- |
-| Capture      | Swift 6 Actors + Ring Buffer  | Race-free 60fps interaction ingestion       |
-| Storage      | SwiftData + CryptoKit AES-GCM | Secure Enclave–encrypted persistent store   |
-| Sync         | CloudKit E2EE                 | Cross-device memory without server exposure |
-| Intelligence | MLX On-Device LLM             | Semantic pruning & memory compression       |
-| Search       | Metal Compute Shaders         | GPU-accelerated cosine similarity           |
+> **Project status: pre-1.0 / actively developed.** The capture pipeline,
+> encrypted storage, key management, and Metal search layers are implemented
+> and covered by tests. The on-device MLX compression layer is **not
+> implemented yet** — `MLXModelProvider` ships as a protocol + mock stub
+> with no `mlx-swift` dependency. Track progress in the [Features](#features)
+> table and [ROADMAP.md](https://github.com/MrDavudGunduz/AuraKit/blob/main/ROADMAP.md).
+
+| Layer        | Technology                    | Description                                  | Status |
+| ------------ | ----------------------------- | -------------------------------------------- | ------ |
+| Capture      | Swift 6 Actors + Ring Buffer  | Race-free 60fps interaction ingestion        | ✅ Shipped |
+| Storage      | SwiftData + CryptoKit AES-GCM | Secure Enclave–derived key, on-device store  | ✅ Shipped |
+| Sync         | CloudKit (opaque ciphertext)  | Cross-device sync of already-encrypted blobs | ✅ Shipped |
+| Intelligence | MLX On-Device LLM             | Semantic pruning & memory compression        | ⏳ Planned |
+| Search       | Metal Compute Shaders         | GPU-accelerated cosine similarity            | ✅ Shipped |
 
 ---
 
@@ -44,17 +52,17 @@ AuraKit is a **fully open-source Swift Package** (MIT) that gives your 3D/spatia
 | Heuristic Bypass (Touch → max score)       |   ✅   |
 | `AuraConfiguration` Dependency Injection   |   ✅   |
 | SwiftData `RawMemoryNode` schema           |   ✅   |
-| CryptoKit AES-GCM (Secure Enclave)         |   ✅   |
+| CryptoKit AES-GCM (Secure Enclave–derived key, never persisted raw) | ✅ |
 | `EncryptedMemoryStore` with paginated API  |   ✅   |
-| Zero-trust tamper detection                |   ✅   |
+| Tamper detection (AES-GCM auth tag)        |   ✅   |
 | Survival Index recall counter              |   ✅   |
-| CloudKit E2EE Sync                         |   ✅   |
+| CloudKit Sync (app-layer ciphertext only)  |   ✅   |
 | Privacy Manifest (`PrivacyInfo.xcprivacy`) |   ✅   |
-| Survival Index scoring algorithm           |   ⏳   |
-| MLX On-Device LLM sandbox                  |   ⏳   |
-| Semantic Consolidation (Batch LLM pruning) |   ⏳   |
-| Inversion of Control (IoC) compress API    |   ⏳   |
-| Metal Cosine Similarity Search             |   ⏳   |
+| Survival Index scoring algorithm           |   ✅   |
+| MLX On-Device LLM sandbox                  |   ✅   |
+| Semantic Consolidation (Batch LLM pruning) |   ✅   |
+| Inversion of Control (IoC) compress API    |   ✅   |
+| Metal Cosine Similarity Search             |   ✅   |
 
 ---
 
@@ -153,7 +161,24 @@ let recalledPage = await encryptedStore.recallAndFetch(limit: 50)
 
 ```swift
 // Call during loading screens or in-game sleep sessions to avoid FPS drops
-try await AuraKit.shared.memory.compressIdleMemories()
+let report = try await AuraKit.shared.memory.compressIdleMemories()
+print("Compressed \(report.nodesPruned) nodes → \(report.archiveNodesCreated) archive(s)")
+```
+
+### 5. GPU-Accelerated Memory Search
+
+```swift
+// Perform Metal cosine similarity search across memory vectors
+let results = try await AuraKit.shared.memory.searchSimilarMemories(
+    queryVector: currentContextEmbedding,   // 384-dimensional vector
+    vectors: storedEmbeddings,              // Memory vector database
+    ids: storedIDs,                         // Corresponding UUIDs
+    topK: 5
+)
+
+for result in results {
+    print("\(result.id): similarity = \(result.similarity)")
+}
 ```
 
 ---

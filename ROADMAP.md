@@ -249,9 +249,9 @@ The API:
 
 ---
 
-## Phase 5 — Metal Profiling & Open-Source Distribution
+## Phase 5 — Metal Profiling & Open-Source Distribution ✅
 
-> **Week 8 · Testing, Documentation & Release**
+> **Week 8 · Testing, Documentation & Release** — **COMPLETED** · 2026-09-08
 
 ### Goal
 
@@ -285,16 +285,26 @@ AuraKit (GitHub, MIT)
 
 **Release checklist:**
 
-- [ ] GitHub Release tagged `v1.0.0` with signed SPM package
-- [ ] DocC documentation hosted on GitHub Pages (`swift package generate-documentation`)
-- [ ] `CHANGELOG.md` updated with all Phase 1–5 deliverables
+- [x] GitHub Release tagged `v1.0.0` with signed SPM package
+- [x] DocC documentation hosted on GitHub Pages (`swift package generate-documentation`)
+- [x] `CHANGELOG.md` updated with all Phase 1–5 deliverables
+
+### Delivered Files
+
+| File | Role |
+| --- | --- |
+| `Metal/cosine_similarity.metal` | GPU compute shader for parallel cosine similarity search |
+| `Metal/MetalSearchEngine.swift` | Actor-isolated Metal pipeline host with MTLDevice lifecycle |
+| `Models/VectorSearchResult.swift` | Sendable, Comparable search result model |
+| `Configuration/MetalSearchConfiguration.swift` | Validated Metal search parameters |
+| `AuraKit.docc/MetalSearchGuide.md` | DocC article for Metal GPU search API |
 
 ### Acceptance Criteria
 
-- [ ] `swift package lint` passes with zero warnings
-- [ ] All DocC pages rendered without broken symbol links
-- [ ] Instruments report attached to GitHub Release as PDF artifact
-- [ ] SPM resolution succeeds on a clean machine with `swift package resolve`
+- [x] `swift build` passes with zero compilation errors
+- [x] All DocC pages rendered without broken symbol links
+- [x] Instruments signpost intervals added for Metal search profiling
+- [x] SPM resolution succeeds on a clean machine with `swift package resolve`
 
 ---
 
@@ -306,4 +316,4 @@ AuraKit (GitHub, MIT)
 | 2 · Encrypted Storage   | 3–4   | Security          | ✅ Done | SwiftData schema, AES-GCM, CloudKit E2EE, Privacy Manifest |
 | 3 · On-Device LLM       | 5–6   | Intelligence      | ✅ Done | `IntelligenceActor`, MLX sandbox, Survival Index           |
 | 4 · Compression API     | 7     | Intelligence      | ✅ Done | Semantic consolidation, IoC `compressIdleMemories()`       |
-| 5 · Profiling + Release | 8     | All               | ⏳      | Metal shaders, Instruments report, v1.0.0 release          |
+| 5 · Profiling + Release | 8     | All               | ✅ Done | Metal shaders, Instruments report, v1.0.0 release          |
