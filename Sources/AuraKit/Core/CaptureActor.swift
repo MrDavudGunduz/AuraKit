@@ -78,6 +78,13 @@ public actor CaptureActor {
   /// cost when the host application never uses compression or evaluation.
   private var _intelligenceActor: IntelligenceActor?
 
+  /// The Metal search engine for GPU-accelerated cosine similarity search.
+  ///
+  /// Lazily initialized on first access — avoids paying the Metal pipeline
+  /// construction cost (device creation, shader compilation, pipeline state)
+  /// when the host application never uses vector search.
+  private var _metalSearchEngine: MetalSearchEngine?
+
   /// The intelligence actor for LLM operations including cognitive compression.
   ///
   /// Lazily creates an ``IntelligenceActor`` configured with this capture's
@@ -98,6 +105,26 @@ public actor CaptureActor {
     )
     _intelligenceActor = actor
     return actor
+  }
+
+  /// Returns the shared ``MetalSearchEngine`` instance, creating it lazily on first access.
+  ///
+  /// Unlike creating a new engine per search call, caching eliminates the
+  /// per-search overhead of Metal device lookup, shader compilation, and
+  /// compute pipeline state creation — reducing repeated search latency.
+  ///
+  /// - Parameter config: Metal search configuration. Default: ``MetalSearchConfiguration/default``.
+  /// - Returns: The cached ``MetalSearchEngine`` instance for this capture pipeline.
+  /// - Throws: ``AuraError/metalUnavailable(reason:)`` if Metal is not available.
+  public func metalSearchEngine(
+    config: MetalSearchConfiguration = .default
+  ) throws -> MetalSearchEngine {
+    if let existing = _metalSearchEngine {
+      return existing
+    }
+    let engine = try MetalSearchEngine(config: config)
+    _metalSearchEngine = engine
+    return engine
   }
 
   // MARK: - Init

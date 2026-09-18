@@ -160,6 +160,11 @@ public struct MemoryManager: Sendable {
   /// - **< 0.5ms** for 1,000 vectors (384-dimensional)
   /// - **< 2ms** for 10,000 vectors
   ///
+  /// The ``MetalSearchEngine`` is lazily cached on the ``CaptureActor`` — the
+  /// Metal pipeline (device, shader, compute pipeline state) is created once
+  /// and reused across all subsequent searches, eliminating per-search
+  /// initialization overhead.
+  ///
   /// ## When to Call
   ///
   /// Unlike ``compressIdleMemories()``, search is lightweight enough to
@@ -194,7 +199,7 @@ public struct MemoryManager: Sendable {
   ) async throws -> [VectorSearchResult] {
     Self.logger.info("[AuraKit] MemoryManager: searchSimilarMemories() invoked with \(vectors.count) vectors.")
 
-    let engine = try MetalSearchEngine(config: config)
+    let engine = try await captureActor.metalSearchEngine(config: config)
     let results = try await engine.search(
       query: queryVector,
       vectors: vectors,
