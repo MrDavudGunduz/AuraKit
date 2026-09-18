@@ -113,6 +113,7 @@ identifier_name:
     - _retryQueue
     - _cachedSourceNodeIDs
     - _dropContinuation
+    - _metalSearchEngine
 
 # ─── Custom Rules ──────────────────────────────────────────────────────────────
 custom_rules:

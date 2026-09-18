@@ -60,7 +60,10 @@ jobs:
         run: |
           # Run SwiftLint as a standalone tool to catch edge cases that
           # the build-time plugin may miss (e.g., disabled targets, conditional compilation).
-          swift run -c release swiftlint lint --strict --reporter github-actions 2>&1 || echo "::warning::SwiftLint reported issues — review annotations above."
+          #
+          # Hard-fails on any violation. If a rule needs relaxing, disable it
+          # explicitly in .swiftlint.yml — don't reach for a silent CI bypass.
+          swift run -c release swiftlint lint --strict --reporter github-actions
 
       # ── Test ───────────────────────────────────────────────────────────
 
@@ -103,29 +106,36 @@ jobs:
 
       - name: Generate Code Coverage
         run: |
+          set -euo pipefail
           swift test --enable-code-coverage
           PROFDATA=$(find .build -name 'default.profdata' -type f | head -1)
           TEST_BIN=$(find .build -name 'AuraKitPackageTests' -type f | head -1)
-          if [ -n "$PROFDATA" ] && [ -n "$TEST_BIN" ]; then
-            xcrun llvm-cov report "$TEST_BIN" -instr-profile "$PROFDATA" \
-              -ignore-filename-regex='\.build|Tests' | tee coverage-report.txt
-            xcrun llvm-cov export "$TEST_BIN" -instr-profile "$PROFDATA" \
-              -ignore-filename-regex='\.build|Tests' -format=lcov > coverage.lcov
+
+          # Fail loudly if profdata or test binary is missing — a silent skip
+          # lets the 80% coverage gate pass with nothing measured.
+          if [ -z "$PROFDATA" ] || [ -z "$TEST_BIN" ]; then
+            echo "::error::Could not locate default.profdata or AuraKitPackageTests binary under .build — coverage cannot be measured."
+            exit 1
           fi
+
+          xcrun llvm-cov report "$TEST_BIN" -instr-profile "$PROFDATA" \
+            -ignore-filename-regex='\.build|Tests' | tee coverage-report.txt
+          xcrun llvm-cov export "$TEST_BIN" -instr-profile "$PROFDATA" \
+            -ignore-filename-regex='\.build|Tests' -format=lcov > coverage.lcov
 
       - name: Enforce Coverage Threshold
         run: |
           if [ ! -f coverage-report.txt ]; then
-            echo "⚠️ Coverage report not found — skipping threshold check."
-            exit 0
+            echo "::error::coverage-report.txt not found — coverage gate cannot be evaluated. Failing closed."
+            exit 1
           fi
 
           # Extract the total line coverage percentage from the TOTAL row
           COVERAGE=$(tail -1 coverage-report.txt | awk '{print $NF}' | tr -d '%')
 
           if [ -z "$COVERAGE" ]; then
-            echo "⚠️ Could not parse coverage percentage — skipping threshold check."
-            exit 0
+            echo "::error::Could not parse coverage percentage from coverage-report.txt. Failing closed."
+            exit 1
           fi
 
           echo "📊 Line Coverage: ${COVERAGE}%"
