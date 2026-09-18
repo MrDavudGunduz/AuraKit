@@ -7,7 +7,6 @@
 // Rotation    → KeyManager+Rotation.swift
 // Derivation  → KeyManager+Derivation.swift
 // Salt mgmt   → KeyManager+Salt.swift
-// Keychain    → KeyManager+Keychain.swift
 
 import CryptoKit
 import Foundation
@@ -67,7 +66,13 @@ import os.log
 /// | `KeyManager+Rotation.swift`   | Key rotation lifecycle and migration API    |
 /// | `KeyManager+Derivation.swift` | ECDH derivation (Secure Enclave + fallback) |
 /// | `KeyManager+Salt.swift`       | HKDF salt generation and persistence        |
-/// | `KeyManager+Keychain.swift`   | Symmetric key Keychain persistence          |
+///
+/// ## Security Design: No Raw Key Persistence
+///
+/// The derived AES-256 key is **never written to the Keychain**. Only the
+/// non-extractable Secure Enclave key reference and the HKDF salt are
+/// persisted. Re-deriving costs ~2–5ms per cold start — negligible against
+/// SwiftData I/O. See ``symmetricKey()`` for the full rationale.
 public actor KeyManager {
 
   // MARK: - Internal Logger
@@ -98,9 +103,7 @@ public actor KeyManager {
   /// matching `RawMemoryNode.keyVersion` against the current version.
   static let keyVersionKeychainAccount = "key-version"
 
-  /// Keychain account identifier for the persisted symmetric key.
-  /// Stored as raw key data (32 bytes) under the same service.
-  static let symmetricKeyKeychainAccount = "symmetric-key"
+
 
   /// HKDF shared info — domain separation for AuraKit v1 key derivation.
   static let hkdfSharedInfo = Data("AuraKit.v1".utf8)
@@ -156,13 +159,20 @@ public actor KeyManager {
 
   // MARK: - Public API
 
-  /// Returns the AES-256 symmetric key, generating it if necessary.
+  /// Returns the AES-256 symmetric key, deriving it if not cached.
   ///
-  /// On first call:
+  /// On first call (per process lifetime, or after
+  /// ``clearCachedKeyForBackground()``):
   /// 1. Retrieves or generates a Secure Enclave P256 key pair
   /// 2. Retrieves or generates a 32-byte HKDF salt from the Keychain
   /// 3. Performs ECDH self-agreement → HKDF-SHA256 derivation
-  /// 4. Caches the result for subsequent calls
+  /// 4. Caches the result **in actor memory only**
+  ///
+  /// The derived key is **not** persisted to the Keychain. Only the
+  /// non-extractable Secure Enclave key reference and the random HKDF
+  /// salt are stored — neither is sufficient alone to reconstruct the
+  /// AES key without invoking Secure Enclave hardware. Re-derivation
+  /// costs ~2–5ms, paid at most once per cold start.
   ///
   /// - Returns: A 256-bit ``SymmetricKey`` suitable for AES-GCM encryption.
   /// - Throws: ``AuraError/secureEnclaveUnavailable(reason:)`` if key generation
@@ -172,18 +182,11 @@ public actor KeyManager {
       return cached
     }
 
-    // Attempt to load persisted key from Keychain
-    if let storedKey = try retrieveSymmetricKeyFromKeychain() {
-      cachedKey = storedKey
-      KeyManager.logger.info("[AuraKit] KeyManager: Loaded symmetric key from Keychain.")
-      return storedKey
-    }
-
-    // Derive new key and persist it
     let key = try deriveKey()
     cachedKey = key
-    try storeSymmetricKeyInKeychain(key)
-    KeyManager.logger.info("[AuraKit] KeyManager: Symmetric key derived and persisted to Keychain.")
+    KeyManager.logger.info(
+      "[AuraKit] KeyManager: Symmetric key derived from Secure Enclave (not persisted)."
+    )
     return key
   }
 

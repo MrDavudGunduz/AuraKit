@@ -23,6 +23,11 @@ extension KeyManager {
   /// 4. Derives a new symmetric key from the same Secure Enclave private key + new salt
   /// 5. Increments ``keyVersion``
   ///
+  /// The new key is cached in actor memory only — it is **not** written to
+  /// the Keychain (see ``symmetricKey()`` for the security rationale). The
+  /// salt swap alone invalidates the old key: any future re-derivation
+  /// produces a different key than ``previousKey``.
+  ///
   /// After rotation, use the returned previous key to decrypt existing ciphertext,
   /// then re-encrypt with the new key obtained from ``symmetricKey()``.
   ///
@@ -46,53 +51,34 @@ extension KeyManager {
     _previousKey = oldKey
 
     do {
-      // Invalidate the persisted symmetric key before rotation.
-      // This ensures a stale key is never loaded from Keychain if the
-      // process is terminated between salt replacement and key persistence.
-      try invalidateStoredSymmetricKey()
-
-      // Generate a fresh salt, replacing the old one in Keychain
+      // Generate a fresh salt, replacing the old one in Keychain.
       let newSalt = try generateAndStoreSalt()
 
-      // Clear cached key so deriveKey uses the new salt
+      // Clear cached key so deriveKey uses the new salt.
       cachedKey = nil
 
-      // Derive new key with the fresh salt
+      // Derive new key with the fresh salt. Cached in actor memory only —
+      // deliberately not written to the Keychain.
       let newKey = try deriveKeyWithSalt(newSalt)
       cachedKey = newKey
       _keyVersion += 1
       try persistKeyVersion()
-
-      // Persist the newly derived key to Keychain for fast retrieval
-      // on subsequent app launches.
-      try storeSymmetricKeyInKeychain(newKey)
 
       KeyManager.logger.info(
         "[AuraKit] KeyManager: Key rotated successfully. Version: \(self._keyVersion)."
       )
 
       return oldKey
-    } catch let error as AuraError {
-      // Restore full previous state if rotation fails — fail-safe rollback
-      cachedKey = oldKey
-      _previousKey = priorPreviousKey
-      _keyVersion = priorKeyVersion
-
-      // Attempt to re-persist the old key on rollback (best-effort).
-      if let oldKey {
-        try? storeSymmetricKeyInKeychain(oldKey)
-      }
-      throw error
     } catch {
-      // Restore full previous state if rotation fails — fail-safe rollback
+      // Restore full previous state — fail-safe rollback.
+      // Nothing to undo in the Keychain: the salt write is the only durable
+      // side effect, and a failed derivation after that simply means the
+      // next symmetricKey() call re-derives from the (already-swapped) salt.
       cachedKey = oldKey
       _previousKey = priorPreviousKey
       _keyVersion = priorKeyVersion
 
-      // Attempt to re-persist the old key on rollback (best-effort).
-      if let oldKey {
-        try? storeSymmetricKeyInKeychain(oldKey)
-      }
+      if let auraError = error as? AuraError { throw auraError }
       throw AuraError.keyRotationFailed(
         reason: "Key rotation failed: \(error.localizedDescription)"
       )

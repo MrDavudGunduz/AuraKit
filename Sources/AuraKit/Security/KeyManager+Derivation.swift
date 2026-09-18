@@ -101,26 +101,15 @@ extension KeyManager {
         KeyManager.logger.info("[AuraKit] KeyManager: Generated new SE key pair.")
       }
 
-      // SECURITY AUDIT: ECDH Self-Agreement
+      // ECDH Self-Agreement — see SECURITY.md for full rationale.
       //
-      // This performs ECDH key agreement with the key's own public key (self-agreement).
-      // While unconventional (standard ECDH uses two distinct parties), this is
-      // cryptographically safe in this context because:
-      //
-      // 1. The shared secret is never used directly — it passes through HKDF-SHA256
-      //    with a per-installation random salt and domain-separated shared info.
-      // 2. The HKDF output is computationally independent of the raw ECDH output
-      //    due to the salt entropy (32 random bytes from SecRandomCopyBytes).
-      // 3. The Secure Enclave private key is hardware-bound and non-exportable,
-      //    providing the primary security guarantee.
-      //
-      // This pattern is used because CryptoKit's SecureEnclave.P256.KeyAgreement
-      // requires an ECDH operation to produce a SharedSecret — there is no direct
-      // "derive symmetric key" API for Secure Enclave keys.
-      //
-      // RECOMMENDATION: Have this derivation path reviewed by an independent
-      // cryptography auditor before deploying in high-sensitivity production
-      // environments (e.g., healthcare, financial, or government applications).
+      // Performs ECDH with the key's own public key to extract usable
+      // symmetric key material from a non-extractable Secure Enclave key.
+      // The raw shared secret is never used directly — it passes through
+      // HKDF-SHA256 with a per-installation random salt and domain-separated
+      // info, so the structural properties of self-agreement don't propagate
+      // to the output key. Determinism is intentional: same SE key + same
+      // salt must always yield the same AES key for existing ciphertext.
       let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(
         with: privateKey.publicKey
       )
