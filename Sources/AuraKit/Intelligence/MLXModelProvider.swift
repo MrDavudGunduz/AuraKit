@@ -79,9 +79,10 @@ public struct MockMLXModelProvider: MLXModelProvider, Sendable {
 
 /// Sandboxed on-device model executor interface for Apple Silicon.
 ///
-/// Ensures network-isolated inference (`com.apple.security.network.client: false`).
-/// In test, simulator, or unweighted target environments, delegates to an embedded
-/// sandbox fallback provider (`MockMLXModelProvider`).
+/// - Warning: **This does not run MLX inference yet.** `infer(prompt:)` unconditionally
+///   delegates to ``fallbackProvider`` (a ``MockMLXModelProvider``). There is no
+///   `mlx-swift` dependency and no code path that loads a real model. Supply your own
+///   ``MLXModelProvider`` conformance or wait for `mlx-swift` integration (see ROADMAP.md).
 public struct SandboxedMLXModelProvider: MLXModelProvider, Sendable {
 
   /// The model identifier (e.g., Llama-3.2-4B-Instruct-4bit).
