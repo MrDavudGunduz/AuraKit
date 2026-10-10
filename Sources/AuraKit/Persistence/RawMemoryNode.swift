@@ -28,10 +28,9 @@ import SwiftData
 ///
 /// ## CloudKit Sync
 ///
-/// When `NSPersistentCloudKitContainer` is configured with E2EE, the
-/// `encryptedPayload` is **double-encrypted**: once by AuraKit (AES-GCM)
-/// and once by CloudKit's own encryption layer. This ensures that even
-/// Apple's CloudKit servers see only opaque ciphertext.
+/// CloudKit sync is **not supported**. The AES key is derived from a
+/// device-bound Secure Enclave key, so a payload synced to another device
+/// could not be decrypted there. See ``PersistenceController`` for details.
 ///
 /// ## Survival Index
 ///
@@ -51,7 +50,7 @@ public final class RawMemoryNode {
   /// Unique identifier for this memory node.
   ///
   /// Generated via `UUID()` to ensure universal uniqueness without requiring
-  /// `@Attribute(.unique)` constraints, maintaining full compatibility with CloudKit sync.
+  /// an `@Attribute(.unique)` constraint (uniqueness is guaranteed by UUID generation).
   public var id: UUID
 
   /// AES-GCM encrypted payload containing the serialised ``SpatialEvent``.

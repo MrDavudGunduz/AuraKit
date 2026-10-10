@@ -13,7 +13,7 @@ AuraKit operates on the principle that **user data should never need to be trust
 | Threat                  | Mitigation                                                        |
 | ----------------------- | ----------------------------------------------------------------- |
 | Physical device seizure | AES-GCM encryption at rest (Secure Enclave key)                   |
-| Cloud server breach     | CloudKit E2EE — Apple cannot read ciphertext                      |
+| Cloud server breach     | N/A — no data is sent to any server (CloudKit sync unsupported)  |
 | LLM data exfiltration   | Network entitlements blocked; MLX runs offline                    |
 | App binary tampering    | Signed Swift Package; no remote code loading                      |
 | App Store rejection     | `PrivacyInfo.xcprivacy` manifest, reviewed by Apple at submission |
@@ -85,38 +85,27 @@ The derived `SymmetricKey` is stored in the **iOS Keychain** with:
 
 ---
 
-## Data in Transit — CloudKit End-to-End Encryption
+## Data in Transit — CloudKit Sync Is Unsupported
 
-AuraKit uses `NSPersistentCloudKitContainer` with Apple's built-in E2EE capabilities introduced in iOS 15+.
+AuraKit does **not** sync data through CloudKit. The AES-256 key is derived from a
+non-exportable Secure Enclave key whose reference lives in a
+`kSecAttrAccessibleWhenUnlockedThisDeviceOnly` Keychain item. A second device cannot
+reproduce that key, so replicated ciphertext would be permanently unreadable there.
 
-### What E2EE means in CloudKit context
+`PersistenceController.makeContainer(cloudKitContainerIdentifier:)` therefore throws
+`AuraError.invalidConfiguration` when a CloudKit identifier is supplied, rather than
+silently creating a container that syncs undecryptable data.
 
-| Party                                      | Can read the data?                    |
-| ------------------------------------------ | ------------------------------------- |
-| AuraKit framework                          | ✅ (holds the local key)              |
-| The user (same Apple ID, different device) | ✅ (key derived from iCloud Keychain) |
-| Apple's CloudKit servers                   | ❌ (see encrypted blob only)          |
-| AuraKit Inc.                               | ❌ (no server, no telemetry)          |
-| Law enforcement (with Apple warrant)       | ❌ (Apple holds no plaintext)         |
+### Consequences
 
-### Implementation Notes
+| Scenario                                  | Result                                                  |
+| ----------------------------------------- | ------------------------------------------------------- |
+| Normal use                                | Data stays on-device, encrypted at rest                 |
+| Restore from device backup to a new phone | Database may restore, but the key does not → unreadable |
+| App reinstall on same device              | Keychain may persist, SwiftData store is recreated      |
 
-```swift
-let container = NSPersistentCloudKitContainer(name: "AuraKit")
-let description = container.persistentStoreDescriptions.first!
-
-// Enable CloudKit sync
-description.cloudKitContainerOptions = NSPersistentCloudKitContainerOptions(
-    containerIdentifier: "iCloud.com.yourcompany.AuraKit"
-)
-
-// Opt into E2EE zone (CKDatabase.privateCloudDatabase with encrypted zone)
-// Records in this zone are encrypted client-side before leaving the device
-description.setOption(true as NSNumber,
-                      forKey: NSPersistentStoreRemoteChangeNotificationPostOptionKey)
-```
-
-All `encryptedPayload` and `encryptedSummary` fields are **already encrypted** before being written to the SwiftData store — so even if CloudKit's own encryption layer were bypassed, the data remains unreadable.
+Multi-device sync would require a dedicated key-sharing design (for example a wrapped
+key in iCloud Keychain). It is not implemented.
 
 ---
 

@@ -1,8 +1,12 @@
 // PersistenceController.swift
 // AuraKit — Persistence Layer
 //
-// Factory for ModelContainer with optional CloudKit E2EE sync.
-// Provides both production (SQLite + CloudKit) and in-memory (testing) configurations.
+// Factory for ModelContainer. Provides production (on-disk SQLite, local-only)
+// and in-memory (testing) configurations.
+//
+// CloudKit sync is intentionally NOT supported: AuraKit's AES key is derived
+// from a device-bound Secure Enclave key, so ciphertext synced to another
+// device could never be decrypted. See ``PersistenceController/makeContainer(cloudKitContainerIdentifier:)``.
 
 import Foundation
 import os.log
@@ -14,24 +18,23 @@ import SwiftData
 ///
 /// `PersistenceController` provides two container configurations:
 ///
-/// | Mode        | Backing Store | CloudKit Sync | Use Case            |
-/// |-------------|---------------|---------------|---------------------|
-/// | `.production` | On-disk SQLite | Optional E2EE | Ship builds         |
-/// | `.inMemory`   | In-memory     | Disabled      | Unit tests, previews |
+/// | Mode          | Backing Store  | CloudKit Sync | Use Case             |
+/// |---------------|----------------|---------------|----------------------|
+/// | `.production` | On-disk SQLite | Unsupported   | Ship builds          |
+/// | `.inMemory`   | In-memory      | Disabled      | Unit tests, previews |
 ///
-/// ## CloudKit End-to-End Encryption
+/// ## Why CloudKit Sync Is Unsupported
 ///
-/// When a `cloudKitContainerIdentifier` is provided, the production container
-/// is configured with `NSPersistentCloudKitContainerOptions` and remote change
-/// notifications. Combined with AuraKit's application-level AES-GCM encryption,
-/// this creates a **double-encrypted** data path:
+/// - The AES-256 key is derived from a **non-exportable Secure Enclave key**
+///   stored in a `ThisDeviceOnly` Keychain item. Another device cannot derive
+///   the same key, so synced ciphertext would be permanently unreadable there.
+/// - CloudKit-backed SwiftData also requires every non-optional attribute to
+///   declare a default value, which the current `@Model` types do not.
 ///
-/// ```
-/// SpatialEvent → AES-GCM (AuraKit) → SwiftData → CloudKit E2EE → iCloud
-/// ```
-///
-/// Neither Apple nor any third party can read the plaintext at any point in
-/// the sync chain.
+/// Silently enabling sync would therefore produce undecryptable data, so the
+/// CloudKit entry points fail fast with ``AuraError/invalidConfiguration(reason:)``.
+/// Multi-device sync requires a dedicated key-sharing design (e.g. a wrapped key
+/// in iCloud Keychain) and is tracked on the roadmap.
 ///
 /// ## Thread Safety
 ///
@@ -59,28 +62,49 @@ public struct PersistenceController: Sendable {
 
   // MARK: - Container Factory
 
-  /// Creates a production `ModelContainer` backed by on-disk SQLite storage.
+  /// Creates a production `ModelContainer` backed by on-disk, local-only SQLite storage.
   ///
-  /// - Parameter cloudKitContainerIdentifier: Optional CloudKit container ID
-  ///   (e.g., `"iCloud.com.yourcompany.AuraKit"`). When provided, CloudKit E2EE
-  ///   sync is enabled. Pass `nil` to disable sync (local-only storage).
+  /// - Parameter cloudKitContainerIdentifier: **Unsupported.** Must be `nil`.
+  ///   Passing a non-`nil` value throws, because CloudKit sync would replicate
+  ///   ciphertext that other devices cannot decrypt (see the type documentation).
   /// - Returns: A configured `ModelContainer` ready for use.
-  /// - Throws: If the container cannot be created (e.g., schema conflicts).
+  /// - Throws: ``AuraError/invalidConfiguration(reason:)`` if a CloudKit identifier
+  ///   is supplied; otherwise any error from `ModelContainer` creation.
   public static func makeContainer(
     cloudKitContainerIdentifier: String? = nil
   ) throws -> ModelContainer {
+    if cloudKitContainerIdentifier != nil {
+      throw cloudKitUnsupportedError()
+    }
+    return try makeLocalContainer()
+  }
+
+  /// Creates a production `ModelContainer` with a ``CloudKitConfiguration``.
+  ///
+  /// - Important: CloudKit sync is **unsupported**; this overload always throws
+  ///   ``AuraError/invalidConfiguration(reason:)``. It is retained only for
+  ///   source compatibility.
+  /// - Parameter cloudKit: Ignored.
+  /// - Throws: ``AuraError/invalidConfiguration(reason:)`` — always.
+  @available(
+    *, deprecated,
+    message: "CloudKit sync is unsupported: the encryption key is device-bound. Use makeContainer() for local storage."
+  )
+  public static func makeContainer(
+    cloudKit config: CloudKitConfiguration
+  ) throws -> ModelContainer {
+    throw cloudKitUnsupportedError()
+  }
+
+  /// Builds the local-only (no CloudKit) on-disk container.
+  private static func makeLocalContainer() throws -> ModelContainer {
     let configuration = ModelConfiguration(
       "AuraKit",
       schema: schema,
       isStoredInMemoryOnly: false,
       allowsSave: true,
       groupContainer: .automatic,
-      cloudKitDatabase: {
-        if let identifier = cloudKitContainerIdentifier {
-          return .private(identifier)
-        }
-        return .none
-      }()
+      cloudKitDatabase: .none
     )
 
     let container = try ModelContainer(
@@ -90,37 +114,19 @@ public struct PersistenceController: Sendable {
     )
 
     PersistenceController.logger.info(
-      """
-      [AuraKit] PersistenceController: Production container created. \
-      CloudKit: \(cloudKitContainerIdentifier != nil ? "enabled" : "disabled").
-      """
+      "[AuraKit] PersistenceController: Production container created (local-only, CloudKit disabled)."
     )
 
     return container
   }
 
-  /// Creates a production `ModelContainer` with type-safe CloudKit configuration.
-  ///
-  /// This overload provides compile-time safety for CloudKit configuration
-  /// by accepting a ``CloudKitConfiguration`` struct instead of a raw `String?`.
-  /// Use this when CloudKit sync is required and you want the compiler to
-  /// validate your configuration:
-  ///
-  /// ```swift
-  /// let config = CloudKitConfiguration(
-  ///     containerIdentifier: "iCloud.com.yourcompany.AuraKit"
-  /// )
-  /// let container = try PersistenceController.makeContainer(cloudKit: config)
-  /// ```
-  ///
-  /// - Parameter cloudKit: A validated ``CloudKitConfiguration`` specifying
-  ///   the container identifier.
-  /// - Returns: A configured `ModelContainer` with CloudKit E2EE sync enabled.
-  /// - Throws: If the container cannot be created (e.g., schema conflicts).
-  public static func makeContainer(
-    cloudKit config: CloudKitConfiguration
-  ) throws -> ModelContainer {
-    try makeContainer(cloudKitContainerIdentifier: config.containerIdentifier)
+  /// The error thrown by every CloudKit entry point.
+  private static func cloudKitUnsupportedError() -> AuraError {
+    AuraError.invalidConfiguration(
+      reason: "CloudKit sync is not supported. AuraKit's AES key is derived from a "
+        + "device-bound Secure Enclave key, so data synced to another device could "
+        + "never be decrypted. Pass nil / use makeContainer() for local-only storage."
+    )
   }
 
   /// Creates an in-memory `ModelContainer` for unit testing and SwiftUI previews.
@@ -154,27 +160,12 @@ public struct PersistenceController: Sendable {
 
 // MARK: - CloudKitConfiguration
 
-/// Type-safe configuration for CloudKit E2EE sync in AuraKit's persistence layer.
+/// Configuration placeholder for a future CloudKit sync implementation.
 ///
-/// Use this struct with ``PersistenceController/makeContainer(cloudKit:)`` to
-/// enable CloudKit End-to-End Encryption with compile-time validated parameters:
-///
-/// ```swift
-/// let cloudKit = CloudKitConfiguration(
-///     containerIdentifier: "iCloud.com.yourcompany.AuraKit"
-/// )
-/// let container = try PersistenceController.makeContainer(cloudKit: cloudKit)
-/// ```
-///
-/// ## Security
-///
-/// Combined with AuraKit's application-level AES-GCM encryption, CloudKit E2EE
-/// creates a **double-encrypted** data path. Neither Apple nor any third party
-/// can read the plaintext at any point in the sync chain:
-///
-/// ```
-/// SpatialEvent → AES-GCM (AuraKit) → SwiftData → CloudKit E2EE → iCloud
-/// ```
+/// - Important: CloudKit sync is **currently unsupported**. The only consumer,
+///   ``PersistenceController/makeContainer(cloudKit:)``, throws
+///   ``AuraError/invalidConfiguration(reason:)``. The type is retained for
+///   source compatibility until a device-independent key-sharing design lands.
 ///
 /// ## Thread Safety
 ///

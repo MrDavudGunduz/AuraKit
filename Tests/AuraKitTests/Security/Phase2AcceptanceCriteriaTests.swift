@@ -162,21 +162,22 @@ struct CiphertextVerificationTests {
 @Suite("Phase 2 AC-2 — CloudKit E2EE Configuration")
 struct CloudKitE2EETests {
 
-  /// Verifies that `PersistenceController.makeContainer` correctly accepts
-  /// a CloudKit container identifier for E2EE sync configuration.
-  ///
-  /// Note: Full CloudKit sync requires entitlements and a signed app.
-  /// This test validates the container creation path and schema integrity
-  /// using the in-memory store as a proxy — the CloudKit configuration
-  /// code path is exercised by the `PersistenceController` unit itself.
-  @Test("PersistenceController configures CloudKit-enabled container without crash")
-  func cloudKitContainerConfigurationPath() throws {
-    // Validate the container factory accepts a CloudKit identifier
-    // without throwing. We use the in-memory container to avoid
-    // on-disk SQLite conflicts in the test runner.
+  /// CloudKit sync is unsupported (device-bound key → undecryptable on other
+  /// devices). The factory must fail fast rather than create a syncing container.
+  @Test("PersistenceController rejects CloudKit identifier instead of syncing undecryptable data")
+  func cloudKitContainerIsRejected() {
+    #expect(throws: AuraError.self) {
+      _ = try PersistenceController.makeContainer(
+        cloudKitContainerIdentifier: "iCloud.com.example.AuraKit"
+      )
+    }
+  }
+
+  /// The local in-memory container still exposes both model types.
+  @Test("In-memory container schema contains both model types")
+  func inMemoryContainerSchemaIntegrity() throws {
     let container = try PersistenceController.makeInMemoryContainer()
 
-    // Verify the container's schema includes both model types
     let context = ModelContext(container)
     let rawCount = try context.fetchCount(FetchDescriptor<RawMemoryNode>())
     let archiveCount = try context.fetchCount(FetchDescriptor<MemoryArchiveNode>())

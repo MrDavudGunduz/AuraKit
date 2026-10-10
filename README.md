@@ -37,7 +37,7 @@ AuraKit is a **fully open-source Swift Package** (MIT) that gives your 3D/spatia
 | ------------ | ----------------------------- | -------------------------------------------- | ------ |
 | Capture      | Swift 6 Actors + Ring Buffer  | Race-free 60fps interaction ingestion        | ✅ Shipped |
 | Storage      | SwiftData + CryptoKit AES-GCM | Secure Enclave–derived key, on-device store  | ✅ Shipped |
-| Sync         | CloudKit (opaque ciphertext)  | Cross-device sync of already-encrypted blobs | ✅ Shipped |
+| Sync         | CloudKit                      | Unsupported — encryption key is device-bound  | ❌ Not supported |
 | Intelligence | MLX On-Device LLM             | Semantic pruning & memory compression        | ⏳ Planned |
 | Search       | Metal Compute Shaders         | GPU-accelerated cosine similarity            | ✅ Shipped |
 
@@ -56,10 +56,10 @@ AuraKit is a **fully open-source Swift Package** (MIT) that gives your 3D/spatia
 | `EncryptedMemoryStore` with paginated API  |   ✅   |
 | Tamper detection (AES-GCM auth tag)        |   ✅   |
 | Survival Index recall counter              |   ✅   |
-| CloudKit Sync (app-layer ciphertext only)  |   ✅   |
+| CloudKit Sync                              |   ❌ (key is device-bound) |
 | Privacy Manifest (`PrivacyInfo.xcprivacy`) |   ✅   |
 | Survival Index scoring algorithm           |   ✅   |
-| MLX On-Device LLM sandbox                  |   ✅   |
+| MLX On-Device LLM sandbox                  |   ⏳ (protocol + mock; no real model yet) |
 | Semantic Consolidation (Batch LLM pruning) |   ✅   |
 | Inversion of Control (IoC) compress API    |   ✅   |
 | Metal Cosine Similarity Search             |   ✅   |
@@ -205,7 +205,7 @@ for result in results {
 │      SwiftData (Secure Enclave keys)                │
 │      RawMemoryNode ◄──────► MemoryArchiveNode       │
 └──────────────────────────┬──────────────────────────┘
-                           │ CloudKit E2EE
+                           │ (local only — no sync)
 ┌──────────────────────────▼──────────────────────────┐
 │              Metal Search Layer                     │
 │           GPU Cosine Similarity (Shader)            │
@@ -221,7 +221,7 @@ For detailed architecture documentation, see [ARCHITECTURE.md](./ARCHITECTURE.md
 AuraKit is designed with a **Zero-Trust, Privacy-First** philosophy:
 
 - All data at rest is encrypted with **AES-GCM** keys generated in the **Secure Enclave**
-- Cross-device sync uses **CloudKit End-to-End Encryption** — Apple cannot read your data
+- Data never leaves the device: **CloudKit sync is intentionally unsupported** because the key is bound to this device's Secure Enclave
 - The on-device LLM runs in a **network-isolated MLX sandbox** — no data leaves the device
 - A `PrivacyInfo.xcprivacy` manifest declares all data types and confirms no external transmission
 - **Zero `force_try`** — all encoding/decoding uses defensive error handling
