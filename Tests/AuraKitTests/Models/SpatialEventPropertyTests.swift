@@ -5,6 +5,7 @@
 // serialization round-trips. Uses parameterized tests with diverse
 // event configurations to verify Codable conformance correctness.
 
+import CryptoKit
 import Foundation
 import simd
 import Testing
