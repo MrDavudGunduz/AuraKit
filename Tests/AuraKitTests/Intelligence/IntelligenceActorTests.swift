@@ -8,7 +8,7 @@ import Testing
 @Suite("IntelligenceActor — On-Device LLM & Semantic Pruning")
 struct IntelligenceActorTests {
 
-  @Test("512-event batch inference completes under 200ms benchmark")
+  @Test("512-event batch inference completes under 200ms benchmark", .tags(.performance), .performanceGate)
   func batchInferenceLatencyBenchmark() async throws {
     let config = try AuraConfiguration(bufferCapacity: 512)
     let store = MemoryStore(capacity: 1000)

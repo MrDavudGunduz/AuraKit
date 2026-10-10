@@ -28,7 +28,9 @@ struct CaptureActorTests {
 
   // MARK: - Bootstrap Performance
 
-  @Test("Bootstrap + first event recorded in < 50ms (order-of-magnitude overhead check)")
+  @Test(
+    "Bootstrap + first event recorded in < 50ms (order-of-magnitude overhead check)",
+    .tags(.performance), .performanceGate)
   func testBootstrapAndFirstEventUnder50ms() async throws {
     // Note: Wall-clock timing is inherently imprecise in unit tests and can
     // produce flaky results on loaded CI runners. This test is intentionally

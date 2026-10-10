@@ -9,7 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> No unreleased changes.
+### Fixed
+
+- `IntelligenceActor.compressIdleMemories()` no longer replaces stored memories with placeholder output. It now refuses to run (throws `AuraError.compressionFailed`) when the model provider is not a production backend, and rejects blank summaries — before any node is read or deleted.
+- Test target compile error: `SpatialEventPropertyTests` was missing `import CryptoKit`.
+
+### Changed
+
+- **BREAKING:** `compressIdleMemories()` now throws when no real `MLXModelProvider` is injected (the default `SandboxedMLXModelProvider` is a placeholder). Inject a production provider via `IntelligenceActor(modelProvider:)` / `CaptureActor.intelligenceActor(modelProvider:)`.
+- `MLXModelProvider` gains `isProductionInferenceBackend` (defaults to `true`; `SandboxedMLXModelProvider` returns `false`).
+- Wall-clock benchmark tests are tagged `.performance` and disabled unless `AURAKIT_RUN_PERFORMANCE=1`; CI runs them in a dedicated serial release job (`test-performance`). See `TESTING.md`.
+- README / SECURITY / `RawMemoryNode` docs corrected: CloudKit sync is unsupported and the MLX sandbox is a protocol + mock only.
+
+### Removed
+
+- **CloudKit sync support.** The AES key is derived from a device-bound Secure Enclave key, so data synced to another device could never be decrypted. `PersistenceController.makeContainer(cloudKitContainerIdentifier:)` now throws `AuraError.invalidConfiguration` for a non-`nil` identifier, and `makeContainer(cloudKit:)` is deprecated and always throws.
+
+### Added
+
+- `.performance` tag and `.performanceGate` trait (`Tests/AuraKitTests/Helpers/Tags.swift`).
+- Regression tests for the compression data-loss guards and the CloudKit fail-fast path.
 
 - Project scaffold: Swift Package with Swift 6 Strict Concurrency and multi-platform support (iOS 17+, macOS 14+, visionOS 1+)
 - SwiftLint build plugin integrated as a compile-time code quality gate

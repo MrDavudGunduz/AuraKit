@@ -15,6 +15,7 @@
   - [@Test and @Suite](#test-and-suite)
   - [#expect and #require](#expect-and-require)
   - [Tags](#tags)
+  - [Performance Benchmarks](#performance-benchmarks)
   - [Parameterized Tests](#parameterized-tests)
   - [async/await & Actor Testing](#asyncawait--actor-testing)
   - [withKnownIssue](#withknownissue)
@@ -181,6 +182,52 @@ Run only tagged tests:
 ```bash
 swift test --filter ":concurrency"
 swift test --filter ":encryption"
+```
+
+### Performance Benchmarks
+
+Tests that assert on **wall-clock time** (latency / throughput budgets) are
+tagged `.performance` and gated by `.performanceGate`
+(see [`Tests/AuraKitTests/Helpers/Tags.swift`](Tests/AuraKitTests/Helpers/Tags.swift)).
+They are **disabled by default** and only run when `AURAKIT_RUN_PERFORMANCE=1`.
+
+```bash
+AURAKIT_RUN_PERFORMANCE=1 swift test -c release -Xswiftc -enable-testing \
+  --no-parallel --filter "Performance|Stress|Benchmark|batchInferenceLatencyBenchmark|testBootstrap"
+```
+
+#### Why they are opt-in
+
+| Reason | Detail |
+| ------ | ------ |
+| **Flakiness under load** | Parallel test execution, sanitizers (TSan/ASan) and shared CI runners distort timings. A 200 ms budget that takes 7 ms in isolation took 680 ms in a full parallel run. A test that fails without a real regression erodes trust in the suite. |
+| **Debug builds are unrepresentative** | Budgets only mean something in `-c release`, without sanitizers, run serially. |
+| **Determinism principle** | The main gate (`swift test`) must give the same result on every run (see [Philosophy](#philosophy)). |
+
+`swift test` has no `--skip-tag` option, which is why the gate is an environment
+variable rather than a tag filter. The `.performance` tag remains useful for
+filtering in Xcode's Test Navigator.
+
+#### Where they run in CI
+
+| Job | Runs benchmarks? | Rationale |
+| --- | :---: | --- |
+| `test-macos` (parallel, TSan, ASan, coverage) | No | Timings are meaningless under parallelism and sanitizers. |
+| `test-performance` (release, serial) | **Yes** | The single place where budgets are measured. Non-blocking (`continue-on-error`) because shared runners are noisy. |
+| `test-ios`, `test-visionos` (simulators) | No | Simulators run on the host Mac CPU, so they do not reflect device performance, and booting a simulator adds noise. The logic under test is platform-independent and is measured in `test-performance`. |
+
+> [!WARNING]
+> **Known gap:** nobody measures performance on a real iOS or visionOS device.
+> Hardware-dependent paths (Metal search, Secure Enclave key derivation) can
+> behave differently on-device. Closing this requires a self-hosted runner or a
+> device farm; until then, profile on hardware with Instruments before releases
+> (see the targets in [ARCHITECTURE.md](ARCHITECTURE.md#performance-targets)).
+
+When adding a timing-sensitive test, give it both traits:
+
+```swift
+@Test("Operation completes under 50ms", .tags(.performance), .performanceGate)
+func operationLatency() { ... }
 ```
 
 ### Parameterized Tests

@@ -31,7 +31,7 @@ private func randomVectors(count: Int, dimension: Int) -> [[Float]] {
 
 // MARK: - MetalSearchEngine Performance
 
-@Suite("Performance — MetalSearchEngine Benchmarks")
+@Suite("Performance — MetalSearchEngine Benchmarks", .tags(.performance), .performanceGate)
 struct MetalSearchBenchmarkTests {
 
   @Test("Search across 100 vectors completes under 50ms")

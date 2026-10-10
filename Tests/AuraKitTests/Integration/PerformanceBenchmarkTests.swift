@@ -20,7 +20,7 @@ import Testing
 
 // MARK: - RingBuffer Performance
 
-@Suite("Performance — RingBuffer Benchmarks")
+@Suite("Performance — RingBuffer Benchmarks", .tags(.performance), .performanceGate)
 struct RingBufferPerformanceTests {
 
   @Test("10K sequential enqueue operations complete under 50ms")
@@ -90,7 +90,7 @@ struct RingBufferPerformanceTests {
 
 // MARK: - Encryption Performance
 
-@Suite("Performance — Encryption Benchmarks")
+@Suite("Performance — Encryption Benchmarks", .tags(.performance), .performanceGate)
 struct EncryptionPerformanceTests {
 
   @Test("1K encrypt/decrypt round-trips complete under 500ms")
@@ -144,7 +144,7 @@ struct EncryptionPerformanceTests {
 
 // MARK: - CaptureActor Performance
 
-@Suite("Performance — CaptureActor Benchmarks")
+@Suite("Performance — CaptureActor Benchmarks", .tags(.performance), .performanceGate)
 struct CaptureActorPerformanceTests {
 
   @Test("1K sequential record() calls complete under 200ms")

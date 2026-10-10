@@ -67,6 +67,8 @@ jobs:
 
       # ── Test ───────────────────────────────────────────────────────────
 
+      # Wall-clock benchmarks are disabled here (no AURAKIT_RUN_PERFORMANCE) —
+      # they run serially in release mode in the `test-performance` job below.
       - name: Test (parallel)
         run: swift test --parallel 2>&1 | tee test-output.txt
 
@@ -222,6 +224,10 @@ jobs:
           echo "✅ PrivacyInfo.xcprivacy passes all validation checks."
 
   # ── iOS Simulator Tests ──────────────────────────────────────────────────
+  # Wall-clock benchmarks are intentionally NOT run here (AURAKIT_RUN_PERFORMANCE
+  # is unset, so they are disabled). Simulators execute on the host Mac CPU and
+  # their timings do not reflect device performance. Performance is measured in
+  # the `test-performance` job. See TESTING.md → "Performance Benchmarks".
   test-ios:
     name: iOS Simulator · ${{ matrix.destination }}
     runs-on: macos-15
@@ -264,6 +270,8 @@ jobs:
             | xcpretty
 
   # ── visionOS Simulator Tests ───────────────────────────────────────────
+  # Benchmarks are intentionally NOT run here — same rationale as `test-ios`.
+  # See TESTING.md → "Performance Benchmarks".
   test-visionos:
     name: visionOS Simulator · Apple Vision Pro
     runs-on: macos-15
@@ -298,3 +306,34 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
             | xcpretty
+
+  # ── Performance Benchmarks ────────────────────────────────────────────────────────────
+  # Wall-clock budgets are only meaningful serially, in release, without
+  # sanitizers. Non-blocking: shared runners are noisy, so a miss is a signal
+  # to investigate, not a merge blocker. Flip `continue-on-error` to false once
+  # a self-hosted/quiet runner is available.
+  #
+  # KNOWN GAP: this runs on a macOS host only. Nobody measures performance on a
+  # real iOS/visionOS device (Metal / Secure Enclave paths may differ on-device);
+  # that needs a self-hosted runner or device farm. See TESTING.md →
+  # "Performance Benchmarks".
+  test-performance:
+    name: Performance Benchmarks (release, serial)
+    runs-on: macos-15
+    continue-on-error: true
+    env:
+      AURAKIT_RUN_PERFORMANCE: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Run benchmarks
+        run: |
+          swift test -c release -Xswiftc -enable-testing --no-parallel \
+            --filter "Performance|Stress|Benchmark|batchInferenceLatencyBenchmark|testBootstrap"

@@ -14,7 +14,7 @@ import Testing
 
 // MARK: - MemoryStore Stress Tests
 
-@Suite("Stress Tests — MemoryStore High-Volume")
+@Suite("Stress Tests — MemoryStore High-Volume", .tags(.performance), .performanceGate)
 struct MemoryStoreStressTests {
 
   @Test("MemoryStore handles 10K event burst in bounded mode")

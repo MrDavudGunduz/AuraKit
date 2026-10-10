@@ -169,6 +169,11 @@ swift test --filter "RingBuffer"    # By suite name
 swift test --enable-code-coverage   # With LCOV report
 ```
 
+> **Performance benchmarks are opt-in.** Wall-clock tests are skipped by default
+> because they are unreliable under parallel execution and in debug builds. Run
+> them with `AURAKIT_RUN_PERFORMANCE=1` — see
+> [TESTING.md → Performance Benchmarks](TESTING.md#performance-benchmarks).
+
 ---
 
 ## Pull Request Process

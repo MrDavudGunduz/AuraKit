@@ -19,7 +19,7 @@ import Testing
 
 // MARK: - EncryptedMemoryStore Performance
 
-@Suite("Performance — EncryptedMemoryStore Benchmarks")
+@Suite("Performance — EncryptedMemoryStore Benchmarks", .tags(.performance), .performanceGate)
 struct EncryptedStoreBenchmarkTests {
 
   @Test("batchAppend 100 events completes under 500ms")
