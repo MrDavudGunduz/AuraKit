@@ -243,4 +243,73 @@ struct CognitiveCompressionTests {
       #expect(summaryEvent.detail == "Summary generated (\(secretSummary.count) characters).")
     }
   }
+
+  // MARK: - Data-Loss Guards
+
+  @Test("compressIdleMemories refuses placeholder provider and leaves all data intact")
+  func compressIdleMemoriesRejectsPlaceholderProvider() async throws {
+    let store = try makeTestEncryptedStore(saveThreshold: 1)
+    let config = AuraConfiguration(
+      capture: try CaptureConfiguration(interactionWeight: 1.0, gazeWeight: 0.3, bufferCapacity: 512),
+      storage: try StorageConfiguration(
+        capacity: 1000,
+        streamBatchSize: 100,
+        largeDatasetWarningThreshold: 1000,
+        saveThreshold: 1,
+        retryQueueCapacity: 10
+      ),
+      intelligence: try IntelligenceConfiguration(
+        decayConstant: 0.0001,
+        recallMultiplier: 1.2,
+        survivalIndexThreshold: 0.5
+      )
+    )
+    // Default provider is the placeholder SandboxedMLXModelProvider.
+    let intelligence = IntelligenceActor(config: config, store: store)
+
+    await store.append(SpatialEvent.gazeFixture(score: 0.1))
+    await store.append(SpatialEvent.gazeFixture(score: 0.2))
+    #expect(await store.count == 2)
+
+    await #expect(throws: AuraError.self) {
+      _ = try await intelligence.compressIdleMemories()
+    }
+
+    #expect(await store.count == 2)
+    #expect(await store.archiveNodeCount == 0)
+  }
+
+  @Test("compressIdleMemories rejects blank summaries and does not prune sources")
+  func compressIdleMemoriesRejectsEmptySummary() async throws {
+    let store = try makeTestEncryptedStore(saveThreshold: 1)
+    let config = AuraConfiguration(
+      capture: try CaptureConfiguration(interactionWeight: 1.0, gazeWeight: 0.3, bufferCapacity: 512),
+      storage: try StorageConfiguration(
+        capacity: 1000,
+        streamBatchSize: 100,
+        largeDatasetWarningThreshold: 1000,
+        saveThreshold: 1,
+        retryQueueCapacity: 10
+      ),
+      intelligence: try IntelligenceConfiguration(
+        decayConstant: 0.0001,
+        recallMultiplier: 1.2,
+        survivalIndexThreshold: 0.5
+      )
+    )
+    let intelligence = IntelligenceActor(
+      config: config,
+      store: store,
+      modelProvider: MockMLXModelProvider(mockResponse: "   \n ")
+    )
+
+    await store.append(SpatialEvent.gazeFixture(score: 0.1))
+
+    await #expect(throws: AuraError.self) {
+      _ = try await intelligence.compressIdleMemories()
+    }
+
+    #expect(await store.count == 1)
+    #expect(await store.archiveNodeCount == 0)
+  }
 }

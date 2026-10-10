@@ -10,11 +10,25 @@ import Foundation
 /// Implementations must execute within process memory without network access
 /// (`com.apple.security.network.client: false`).
 public protocol MLXModelProvider: Sendable {
+  /// Whether this provider performs real model inference whose output may be
+  /// trusted for **destructive** operations (e.g. cognitive compression, which
+  /// deletes source nodes after archiving the model's summary).
+  ///
+  /// Defaults to `true`. Placeholder providers that do not run a real model
+  /// (such as ``SandboxedMLXModelProvider`` today) return `false`, which makes
+  /// ``IntelligenceActor/compressIdleMemories()`` refuse to run instead of
+  /// replacing user memories with meaningless output.
+  var isProductionInferenceBackend: Bool { get }
+
   /// Executes inference for a batch prompt on the on-device LLM.
   ///
   /// - Parameter prompt: The serialized JSON prompt.
   /// - Returns: The model's raw output response.
   func infer(prompt: String) async throws -> String
+}
+
+extension MLXModelProvider {
+  public var isProductionInferenceBackend: Bool { true }
 }
 
 // MARK: - Mock Model Provider for CI & Unit Testing
@@ -83,7 +97,12 @@ public struct MockMLXModelProvider: MLXModelProvider, Sendable {
 ///   delegates to ``fallbackProvider`` (a ``MockMLXModelProvider``). There is no
 ///   `mlx-swift` dependency and no code path that loads a real model. Supply your own
 ///   ``MLXModelProvider`` conformance or wait for `mlx-swift` integration (see ROADMAP.md).
+///   Because of this, ``isProductionInferenceBackend`` is `false` and destructive
+///   operations such as ``IntelligenceActor/compressIdleMemories()`` refuse to run.
 public struct SandboxedMLXModelProvider: MLXModelProvider, Sendable {
+
+  /// Always `false`: this provider delegates to a mock and runs no real model.
+  public var isProductionInferenceBackend: Bool { false }
 
   /// The model identifier (e.g., Llama-3.2-4B-Instruct-4bit).
   public let modelIdentifier: String

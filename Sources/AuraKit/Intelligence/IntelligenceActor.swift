@@ -210,6 +210,7 @@ public actor IntelligenceActor {
     emitCompressionEvent(.started, detail: "Compression operation started.")
 
     let encryptedStore = try validateEncryptedStore()
+    try validateProviderForDestructiveOperation()
     let threshold = config.intelligence.survivalIndexThreshold
     let snapshots = await encryptedStore.fetchNodesBelowThreshold(threshold)
 
@@ -272,6 +273,27 @@ public actor IntelligenceActor {
     return encryptedStore
   }
 
+  /// Refuses to run compression with a placeholder provider.
+  ///
+  /// Compression deletes the source nodes after archiving the model's summary.
+  /// With a provider that does not run a real model (e.g. the default
+  /// ``SandboxedMLXModelProvider``), that summary would be meaningless and the
+  /// user's memories would be irreversibly replaced by it. Fail before any
+  /// read or write happens.
+  private func validateProviderForDestructiveOperation() throws {
+    guard modelProvider.isProductionInferenceBackend else {
+      let error = AuraError.compressionFailed(
+        reason: "Cognitive compression requires a real MLXModelProvider. "
+          + "The configured provider is a placeholder and would replace stored memories "
+          + "with meaningless output. Inject a production provider via "
+          + "IntelligenceActor(modelProvider:) / CaptureActor.intelligenceActor(modelProvider:)."
+      )
+      Self.logger.error("[AuraKit] IntelligenceActor: Compression refused — placeholder model provider.")
+      emitCompressionEvent(.failed, detail: error.localizedDescription)
+      throw error
+    }
+  }
+
   private func generateConsolidatedSummary(
     for snapshots: [RawMemoryNodeSnapshot],
     signpostID: OSSignpostID
@@ -279,6 +301,9 @@ public actor IntelligenceActor {
     let prompt = ConsolidationPromptBuilder.build(from: snapshots)
     do {
       let summaryText = try await modelProvider.infer(prompt: prompt)
+      guard !summaryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        throw AuraError.compressionFailed(reason: "Model returned an empty summary.")
+      }
       emitCompressionEvent(.summaryGenerated, detail: "Summary generated (\(summaryText.count) characters).")
       return summaryText
     } catch {
