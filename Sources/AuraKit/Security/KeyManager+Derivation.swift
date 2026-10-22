@@ -14,36 +14,78 @@ import os.log
 
 extension KeyManager {
 
-  /// Derives a symmetric key from the Secure Enclave private key using the stored salt.
+  /// Derives the symmetric key for a specific key version.
   ///
-  /// This is the top-level derivation entry point called by ``symmetricKey()``.
-  /// It retrieves (or generates) the HKDF salt, then delegates to the
-  /// platform-appropriate derivation method.
+  /// This is the top-level derivation entry point. In static (test) mode the key
+  /// is derived in memory from the static root key; in production mode the
+  /// version's HKDF salt is loaded (or, for the current version on first
+  /// launch, created) and combined with the Secure Enclave ECDH secret.
   ///
   /// ## Performance Telemetry
   ///
-  /// This method is instrumented with `os_signpost` via ``SignpostLogger``.
-  /// The key derivation interval (~2–5ms on physical devices) is visible in
-  /// **Instruments → Time Profiler** under the `KeyDerivation` signpost name.
-  func deriveKey() throws -> SymmetricKey {
+  /// Instrumented with `os_signpost` via ``SignpostLogger`` (~2–5ms on device),
+  /// visible in **Instruments → Time Profiler** under `KeyDerivation`.
+  ///
+  /// - Parameters:
+  ///   - version: The key version to derive.
+  ///   - createSaltIfMissing: Whether a missing salt may be generated. Only `true`
+  ///     for the current version — retired versions must never get new salts.
+  func deriveKey(forVersion version: Int, createSaltIfMissing: Bool) throws -> SymmetricKey {
     let signpostID = SignpostLogger.beginKeyDerivation()
     defer { SignpostLogger.endKeyDerivation(signpostID) }
 
-    let salt = try retrieveOrGenerateSalt()
+    if isStaticMode {
+      return try deriveStaticKey(forVersion: version, createSaltIfMissing: createSaltIfMissing)
+    }
+
+    let salt = try salt(forVersion: version, createIfMissing: createSaltIfMissing)
     return try deriveKeyWithSalt(salt)
   }
 
   /// Derives a symmetric key using a specific salt.
   ///
   /// Routes to Secure Enclave on physical devices or software P256 on simulators.
-  /// Called by both ``deriveKey()`` (initial derivation) and ``rotateKey()``
-  /// (post-rotation derivation with the fresh salt).
   func deriveKeyWithSalt(_ salt: Data) throws -> SymmetricKey {
     #if targetEnvironment(simulator)
     return try deriveKeyUsingSoftwareP256(salt: salt)
     #else
     return try deriveKeyUsingSecureEnclave(salt: salt)
     #endif
+  }
+
+  // MARK: - Static Mode (Tests)
+
+  /// Derives a version key from the static root key without touching the
+  /// Keychain or Secure Enclave.
+  ///
+  /// Version `0` is the static key itself; version `n > 0` is
+  /// `HKDF(staticKey, salt_n)` with an in-memory random salt.
+  private func deriveStaticKey(forVersion version: Int, createSaltIfMissing: Bool) throws -> SymmetricKey {
+    guard let root = staticRootKey else {
+      throw AuraError.secureEnclaveUnavailable(
+        reason: "Static key was cleared via clearCachedKey(); no key material is available."
+      )
+    }
+    if version == 0 {
+      return root
+    }
+
+    let salt: Data
+    if let existing = staticSalts[version] {
+      salt = existing
+    } else if createSaltIfMissing {
+      salt = try Self.randomSalt()
+      staticSalts[version] = salt
+    } else {
+      throw AuraError.keyRotationFailed(reason: "Static key material for version \(version) is unavailable.")
+    }
+
+    return HKDF<SHA256>.deriveKey(
+      inputKeyMaterial: root,
+      salt: salt,
+      info: KeyManager.staticRotationSharedInfo,
+      outputByteCount: KeyManager.symmetricKeyByteCount
+    )
   }
 
   // MARK: - Secure Enclave (Physical Device)
@@ -68,8 +110,9 @@ extension KeyManager {
     do {
       let privateKey: SecureEnclave.P256.KeyAgreement.PrivateKey
 
-      // Attempt to retrieve existing key from Keychain
-      if let existingKeyData = KeychainHelper.retrieve(
+      // Attempt to retrieve existing key from Keychain. A read *failure*
+      // (e.g., device locked) throws — it must never be mistaken for "no key".
+      if let existingKeyData = try KeychainHelper.retrieveOrThrow(
         service: KeyManager.keychainService,
         account: KeyManager.keyRefKeychainAccount
       ) {
@@ -154,7 +197,7 @@ extension KeyManager {
     do {
       let privateKey: P256.KeyAgreement.PrivateKey
 
-      if let existingKeyData = KeychainHelper.retrieve(
+      if let existingKeyData = try KeychainHelper.retrieveOrThrow(
         service: KeyManager.keychainService,
         account: KeyManager.keyRefKeychainAccount
       ) {

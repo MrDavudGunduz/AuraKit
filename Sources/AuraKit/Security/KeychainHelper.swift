@@ -213,6 +213,50 @@ enum KeychainHelper {
     return result as? Data
   }
 
+  /// Throwing variant of ``retrieve(service:account:accessGroup:)`` that
+  /// distinguishes a **missing** item from a **failed** lookup.
+  ///
+  /// `retrieve` collapses every `OSStatus` into `nil`, which makes
+  /// `errSecInteractionNotAllowed` (device locked, item protected with
+  /// `WhenUnlocked…`) indistinguishable from "no item yet". Key-management
+  /// code must never treat a locked Keychain as a first launch — doing so
+  /// would generate fresh key material and orphan all existing ciphertext.
+  ///
+  /// - Returns: The stored data, or `nil` **only** when `errSecItemNotFound`.
+  /// - Throws: ``AuraError/keychainOperationFailed(operation:status:)`` for
+  ///   any other non-success status.
+  static func retrieveOrThrow(
+    service: String,
+    account: String,
+    accessGroup: String? = nil
+  ) throws -> Data? {
+    var query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: account,
+      kSecReturnData as String: true,
+      kSecMatchLimit as String: kSecMatchLimitOne,
+    ]
+    if let group = accessGroup {
+      query[kSecAttrAccessGroup as String] = group
+    }
+
+    var result: AnyObject?
+    let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+    switch status {
+    case errSecSuccess:
+      return result as? Data
+    case errSecItemNotFound:
+      return nil
+    default:
+      KeychainHelper.logger.error(
+        "[AuraKit] KeychainHelper: SecItemCopyMatching failed — OSStatus \(status) for account '\(account)'."
+      )
+      throw AuraError.keychainOperationFailed(operation: "retrieve", status: Int(status))
+    }
+  }
+
   // MARK: - Delete
 
   /// Deletes a specific item from the Keychain.

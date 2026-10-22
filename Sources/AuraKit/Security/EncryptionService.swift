@@ -90,4 +90,61 @@ public struct EncryptionService: Sendable {
       throw AuraError.decryptionFailed(reason: error.localizedDescription)
     }
   }
+
+  // MARK: - Authenticated Associated Data (AAD)
+
+  /// Encrypts a payload and binds it to `authenticatedData` (AES-GCM AAD).
+  ///
+  /// The associated data is **not** encrypted, but it is covered by the
+  /// authentication tag: decryption fails unless the exact same bytes are
+  /// supplied. AuraKit binds each record's identity (ID, key version, type)
+  /// this way, so ciphertext cannot be moved to another record or relabelled.
+  ///
+  /// - Parameters:
+  ///   - plaintext: The raw data to encrypt.
+  ///   - key: A 256-bit symmetric key.
+  ///   - authenticatedData: Context bytes bound to the ciphertext.
+  /// - Returns: Combined ciphertext (nonce || ciphertext || tag).
+  /// - Throws: ``AuraError/encryptionFailed(reason:)`` if the seal operation fails.
+  public func encrypt(
+    _ plaintext: Data,
+    using key: SymmetricKey,
+    authenticating authenticatedData: Data
+  ) throws -> Data {
+    do {
+      let sealedBox = try AES.GCM.seal(plaintext, using: key, authenticating: authenticatedData)
+      guard let combined = sealedBox.combined else {
+        throw AuraError.encryptionFailed(
+          reason: "AES.GCM.seal succeeded but combined representation is nil."
+        )
+      }
+      return combined
+    } catch let error as AuraError {
+      throw error
+    } catch {
+      throw AuraError.encryptionFailed(reason: error.localizedDescription)
+    }
+  }
+
+  /// Decrypts a payload that was sealed with ``encrypt(_:using:authenticating:)``.
+  ///
+  /// - Parameters:
+  ///   - combined: The combined ciphertext.
+  ///   - key: The key used during encryption.
+  ///   - authenticatedData: The exact context bytes supplied during encryption.
+  /// - Returns: The original plaintext.
+  /// - Throws: ``AuraError/decryptionFailed(reason:)`` if the key, ciphertext,
+  ///   or associated data does not match.
+  public func decrypt(
+    _ combined: Data,
+    using key: SymmetricKey,
+    authenticating authenticatedData: Data
+  ) throws -> Data {
+    do {
+      let sealedBox = try AES.GCM.SealedBox(combined: combined)
+      return try AES.GCM.open(sealedBox, using: key, authenticating: authenticatedData)
+    } catch {
+      throw AuraError.decryptionFailed(reason: error.localizedDescription)
+    }
+  }
 }

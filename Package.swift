@@ -18,10 +18,14 @@ let package = Package(
   ],
   dependencies: [
     // 📚 Apple DocC: For generating professional framework documentation.
+    // Command plugin only — never runs as part of a consumer's build.
     .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.3.0"),
 
-    // 🛡️ SwiftLint: Enforces code quality and style standards at build time.
-    .package(url: "https://github.com/realm/SwiftLint", from: "0.54.0"),
+    // NOTE: SwiftLint is intentionally NOT a package dependency.
+    // SPM resolves plugin dependencies for every consumer of this library,
+    // which would force SwiftLint + SwiftSyntax downloads and a
+    // "Trust & Enable Plugin" prompt on host applications. Linting runs as a
+    // standalone tool in CI (`swiftlint lint --strict`) using `.swiftlint.yml`.
   ],
   targets: [
     // 📦 Core Library Target
@@ -31,9 +35,6 @@ let package = Package(
       path: "Sources/AuraKit",
       resources: [
         .process("PrivacyInfo.xcprivacy")
-      ],
-      plugins: [
-        .plugin(name: "SwiftLintBuildToolPlugin", package: "SwiftLint")
       ]
     ),
     // 🧪 Test Target — Swift Testing framework

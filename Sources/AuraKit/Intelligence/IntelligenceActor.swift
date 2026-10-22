@@ -72,6 +72,12 @@ public actor IntelligenceActor {
   ///   unbounded memory growth if the consumer falls behind.
   public let compressionEventStream: AsyncStream<MemoryCompressionEvent>
 
+  /// `true` while ``compressIdleMemories(referenceDate:)`` is running.
+  ///
+  /// Actors are reentrant: without this flag a second call arriving during
+  /// the (long) LLM inference would select and archive the same nodes twice.
+  private var isCompressing = false
+
   // MARK: - Init
 
   /// Initializes an `IntelligenceActor`.
@@ -119,7 +125,16 @@ public actor IntelligenceActor {
     // 3. Parse scored manifest from LLM output
     let parsedScores = SurvivalIndexParser.parse(rawOutput, referencing: events)
 
-    // 4. Calculate Survival Index for each event and construct updated models
+    // 4. Resolve recall counts (n) for persisted events. Events that are not
+    //    (yet) in an encrypted store — e.g. fresh L1 buffer drains — use n = 0.
+    let recallCounts: [UUID: Int]
+    if let encryptedStore = store as? EncryptedMemoryStore {
+      recallCounts = await encryptedStore.recalledCounts(for: Set(events.map(\.id)))
+    } else {
+      recallCounts = [:]
+    }
+
+    // 5. Calculate Survival Index for each event and construct updated models
     var evaluatedEvents: [SpatialEvent] = []
     evaluatedEvents.reserveCapacity(events.count)
 
@@ -130,7 +145,7 @@ public actor IntelligenceActor {
       // Calculate SI(t) = S₀ · Rⁿ · e^(-λt)
       let calculatedSI = SurvivalIndex.calculate(
         initialScore: initialScore,
-        recallCount: 0,
+        recallCount: recallCounts[event.id] ?? 0,
         ageInSeconds: ageInSeconds,
         decayConstant: config.intelligence.decayConstant,
         recallMultiplier: config.intelligence.recallMultiplier
@@ -144,15 +159,22 @@ public actor IntelligenceActor {
 
   /// Evaluates the batch and automatically prunes low-SI nodes from the backing store.
   ///
+  /// - Important: This is a **destructive** operation driven by model output,
+  ///   so it requires a provider with
+  ///   ``MLXModelProvider/isProductionInferenceBackend`` set to `true`.
+  ///
   /// - Parameters:
   ///   - events: Events to evaluate and prune.
   ///   - referenceDate: Reference date for decay calculation.
   /// - Returns: Tuple containing (evaluatedEvents, prunedCount).
+  /// - Throws: ``AuraError/compressionFailed(reason:)`` if the provider is a
+  ///   placeholder; any inference error from ``evaluateBatch(_:referenceDate:)``.
   @discardableResult
   public func processAndPrune(
     _ events: [SpatialEvent],
     referenceDate: Date = Date()
   ) async throws -> (evaluatedEvents: [SpatialEvent], prunedCount: Int) {
+    try validateProviderForDestructiveOperation(operation: "Semantic pruning")
     let evaluated = try await evaluateBatch(events, referenceDate: referenceDate)
 
     var pruneIDs = Set<UUID>()
@@ -180,12 +202,14 @@ public actor IntelligenceActor {
   ///
   /// This is the core Phase 4 cognitive compression API. The full pipeline:
   ///
-  /// 1. `EncryptedMemoryStore` selects all nodes below the SI threshold
+  /// 1. `EncryptedMemoryStore` selects all nodes whose Survival Index
+  ///    `SI(t) = S₀·Rⁿ·e^(-λt)` at `referenceDate` is below the threshold
   /// 2. MLX analyzes them in a single prompt: _"Summarize the key spatial events
   ///    in one sentence."_
-  /// 3. The resulting natural-language summary is encrypted with AES-GCM
+  /// 3. The resulting natural-language summary is encrypted with AES-GCM,
+  ///    bound to the archive ID via AAD
   /// 4. A ``MemoryArchiveNode`` is written with the encrypted summary
-  /// 5. Source ``RawMemoryNode`` records are deleted atomically
+  /// 5. Source ``RawMemoryNode`` records that **still exist** are deleted atomically
   ///
   /// ## IoC Design
   ///
@@ -199,20 +223,33 @@ public actor IntelligenceActor {
   ///
   /// ## Requirements
   ///
-  /// This method requires the backing store to be an ``EncryptedMemoryStore``.
-  /// When configured with a ``MemoryStore`` (Phase 1 in-memory store),
-  /// compression is not supported and throws ``AuraError/compressionFailed(reason:)``.
+  /// This method requires the backing store to be an ``EncryptedMemoryStore``
+  /// and a provider with ``MLXModelProvider/isProductionInferenceBackend``.
+  /// Concurrent calls are rejected while a compression is in progress.
   ///
+  /// - Parameter referenceDate: Evaluation time for the decay term. Inject a
+  ///   fixed date for deterministic tests.
   /// - Returns: A ``CompressionReport`` describing the outcome.
   /// - Throws: ``AuraError/compressionFailed(reason:)`` if compression fails.
-  public func compressIdleMemories() async throws -> CompressionReport {
+  public func compressIdleMemories(referenceDate: Date = Date()) async throws -> CompressionReport {
+    guard !isCompressing else {
+      throw AuraError.compressionFailed(reason: "A compression operation is already in progress.")
+    }
+    isCompressing = true
+    defer { isCompressing = false }
+
     let startTime = ContinuousClock.now
     emitCompressionEvent(.started, detail: "Compression operation started.")
 
     let encryptedStore = try validateEncryptedStore()
-    try validateProviderForDestructiveOperation()
+    try validateProviderForDestructiveOperation(operation: "Cognitive compression")
     let threshold = config.intelligence.survivalIndexThreshold
-    let snapshots = await encryptedStore.fetchNodesBelowThreshold(threshold)
+    let snapshots = await encryptedStore.fetchNodesBelowSurvivalIndex(
+      threshold: threshold,
+      decayConstant: config.intelligence.decayConstant,
+      recallMultiplier: config.intelligence.recallMultiplier,
+      referenceDate: referenceDate
+    )
 
     guard !snapshots.isEmpty else {
       emitCompressionEvent(.completed, detail: "No nodes below SI threshold \(threshold). Nothing to compress.")
@@ -225,14 +262,21 @@ public actor IntelligenceActor {
     Self.logger.info("[AuraKit] IntelligenceActor: Compression — \(snapshots.count) nodes selected below SI \(threshold).")
 
     let summaryText = try await generateConsolidatedSummary(for: snapshots, signpostID: signpostID)
-    let encryptedSummaryData = try await encryptSummary(summaryText, using: encryptedStore.keyManager, signpostID: signpostID)
+
+    // The archive ID is bound into the ciphertext (AAD), so create it first.
+    let archiveNodeID = UUID()
+    let encryptedSummaryData = try await encryptSummary(
+      summaryText,
+      archiveID: archiveNodeID,
+      store: encryptedStore,
+      signpostID: signpostID
+    )
 
     let sourceNodeIDs = Set(snapshots.map(\.id))
     let bytesRecovered = await encryptedStore.totalPayloadSize(for: sourceNodeIDs)
-    let archiveNodeID = UUID()
 
     emitCompressionEvent(.archiveCreated, detail: "Archive node \(archiveNodeID) created with \(snapshots.count) source references.")
-    try await commitCompressionTransaction(
+    let prunedCount = try await commitCompressionTransaction(
       store: encryptedStore,
       encryptedSummary: encryptedSummaryData,
       sourceNodeIDs: sourceNodeIDs,
@@ -242,7 +286,7 @@ public actor IntelligenceActor {
 
     SignpostLogger.endCompression(signpostID)
     let report = CompressionReport(
-      nodesPruned: sourceNodeIDs.count,
+      nodesPruned: prunedCount,
       archiveNodesCreated: 1,
       bytesRecovered: bytesRecovered,
       summary: summaryText,
@@ -273,22 +317,22 @@ public actor IntelligenceActor {
     return encryptedStore
   }
 
-  /// Refuses to run compression with a placeholder provider.
+  /// Refuses to run destructive operations with an untrusted provider.
   ///
-  /// Compression deletes the source nodes after archiving the model's summary.
-  /// With a provider that does not run a real model (e.g. the default
-  /// ``SandboxedMLXModelProvider``), that summary would be meaningless and the
-  /// user's memories would be irreversibly replaced by it. Fail before any
-  /// read or write happens.
-  private func validateProviderForDestructiveOperation() throws {
+  /// Compression deletes the source nodes after archiving the model's summary,
+  /// and pruning deletes nodes based on model scores. With a provider that does
+  /// not run a real model (e.g. the default ``SandboxedMLXModelProvider``),
+  /// that output would be meaningless and the user's memories would be
+  /// irreversibly lost. Fail before any read or write happens.
+  private func validateProviderForDestructiveOperation(operation: String) throws {
     guard modelProvider.isProductionInferenceBackend else {
       let error = AuraError.compressionFailed(
-        reason: "Cognitive compression requires a real MLXModelProvider. "
-          + "The configured provider is a placeholder and would replace stored memories "
-          + "with meaningless output. Inject a production provider via "
+        reason: "\(operation) requires a real MLXModelProvider. "
+          + "The configured provider is a placeholder and would replace or delete stored memories "
+          + "based on meaningless output. Inject a production provider (isProductionInferenceBackend == true) via "
           + "IntelligenceActor(modelProvider:) / CaptureActor.intelligenceActor(modelProvider:)."
       )
-      Self.logger.error("[AuraKit] IntelligenceActor: Compression refused — placeholder model provider.")
+      Self.logger.error("[AuraKit] IntelligenceActor: \(operation) refused — placeholder model provider.")
       emitCompressionEvent(.failed, detail: error.localizedDescription)
       throw error
     }
@@ -316,14 +360,12 @@ public actor IntelligenceActor {
 
   private func encryptSummary(
     _ summaryText: String,
-    using keyManager: KeyManager,
+    archiveID: UUID,
+    store: EncryptedMemoryStore,
     signpostID: OSSignpostID
   ) async throws -> Data {
     do {
-      let encryptionService = EncryptionService()
-      let key = try await keyManager.symmetricKey()
-      let summaryData = Data(summaryText.utf8)
-      return try encryptionService.encrypt(summaryData, using: key)
+      return try await store.sealArchiveSummary(summaryText, archiveID: archiveID)
     } catch {
       SignpostLogger.endCompression(signpostID)
       let compressionError = AuraError.compressionFailed(reason: "Summary encryption failed: \(error.localizedDescription)")
@@ -338,14 +380,15 @@ public actor IntelligenceActor {
     sourceNodeIDs: Set<UUID>,
     archiveNodeID: UUID,
     signpostID: OSSignpostID
-  ) async throws {
+  ) async throws -> Int {
     do {
-      try await store.archiveAndPruneNodes(
+      let deleted = try await store.archiveAndPruneNodes(
         encryptedSummary: encryptedSummary,
         sourceNodeIDs: sourceNodeIDs,
         archiveNodeID: archiveNodeID
       )
-      emitCompressionEvent(.sourceNodesDeleted, detail: "Deleted \(sourceNodeIDs.count) source nodes.")
+      emitCompressionEvent(.sourceNodesDeleted, detail: "Deleted \(deleted) source nodes.")
+      return deleted
     } catch {
       SignpostLogger.endCompression(signpostID)
       emitCompressionEvent(.failed, detail: "Archive-and-prune transaction failed: \(error.localizedDescription)")

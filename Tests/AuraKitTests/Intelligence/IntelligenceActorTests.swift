@@ -52,7 +52,7 @@ struct IntelligenceActorTests {
     await store.append(freshEvent)
     #expect(await store.count == 2)
 
-    let mockProvider = MockMLXModelProvider(latencyMs: 1)
+    let mockProvider = MockMLXModelProvider(latencyMs: 1, trustedForDestructiveOperations: true)
     let intelligenceActor = IntelligenceActor(config: config, store: store, modelProvider: mockProvider)
 
     let (evaluated, prunedCount) = try await intelligenceActor.processAndPrune([oldEvent, freshEvent])
@@ -80,7 +80,7 @@ struct IntelligenceActorTests {
     await store.append(oldEvent)
     #expect(await store.count == 1)
 
-    let mockProvider = MockMLXModelProvider(latencyMs: 1)
+    let mockProvider = MockMLXModelProvider(latencyMs: 1, trustedForDestructiveOperations: true)
     let intelligenceActor = IntelligenceActor(config: config, store: store, modelProvider: mockProvider)
 
     let (_, prunedCount) = try await intelligenceActor.processAndPrune([oldEvent])

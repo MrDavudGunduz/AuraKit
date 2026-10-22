@@ -6,6 +6,7 @@
 // Fully Swift 6 compliant: no shared mutable state, no concurrency warnings.
 
 import Foundation
+import os.log
 
 // MARK: - CaptureActor
 
@@ -51,6 +52,13 @@ import Foundation
 /// ```
 public actor CaptureActor {
 
+  // MARK: - Logger
+
+  private static let logger = Logger(
+    subsystem: AuraKitConstants.subsystem,
+    category: "CaptureActor"
+  )
+
   // MARK: - Private Components
 
   /// L1 ring buffer for low-signal gaze events awaiting LLM processing.
@@ -72,6 +80,10 @@ public actor CaptureActor {
   /// The active configuration driving routing weights and buffer sizing.
   private let config: AuraConfiguration
 
+  /// Model provider injected at construction; used when the intelligence
+  /// actor is created without an explicit override.
+  private let defaultModelProvider: (any MLXModelProvider)?
+
   /// The intelligence actor for LLM evaluation and cognitive compression.
   ///
   /// Lazily initialized on first access — avoids paying the construction
@@ -85,23 +97,35 @@ public actor CaptureActor {
   /// when the host application never uses vector search.
   private var _metalSearchEngine: MetalSearchEngine?
 
+  /// The configuration the cached ``_metalSearchEngine`` was built with.
+  private var _metalSearchConfig: MetalSearchConfiguration?
+
   /// The intelligence actor for LLM operations including cognitive compression.
   ///
   /// Lazily creates an ``IntelligenceActor`` configured with this capture's
   /// configuration and backing store. Used by ``MemoryManager`` for compression.
   ///
-  /// - Parameter modelProvider: Optional model provider override (for testing).
+  /// The provider is fixed when the actor is first created: `modelProvider`
+  /// (if given) or the provider passed to ``init(config:store:modelProvider:)``.
+  /// A provider passed **after** creation is ignored and a warning is logged.
+  ///
+  /// - Parameter modelProvider: Optional model provider override.
   /// - Returns: The shared ``IntelligenceActor`` instance for this capture pipeline.
   public func intelligenceActor(
     modelProvider: (any MLXModelProvider)? = nil
   ) -> IntelligenceActor {
     if let existing = _intelligenceActor {
+      if modelProvider != nil {
+        Self.logger.warning(
+          "[AuraKit] CaptureActor: intelligenceActor(modelProvider:) override ignored — the IntelligenceActor was already created. Inject the provider via CaptureActor.init or AuraKit.configure instead."
+        )
+      }
       return existing
     }
     let actor = IntelligenceActor(
       config: config,
       store: store,
-      modelProvider: modelProvider
+      modelProvider: modelProvider ?? defaultModelProvider
     )
     _intelligenceActor = actor
     return actor
@@ -113,17 +137,22 @@ public actor CaptureActor {
   /// per-search overhead of Metal device lookup, shader compilation, and
   /// compute pipeline state creation — reducing repeated search latency.
   ///
+  /// The cache is keyed by `config`: requesting a different configuration
+  /// rebuilds the engine instead of silently returning one with the wrong
+  /// vector dimension.
+  ///
   /// - Parameter config: Metal search configuration. Default: ``MetalSearchConfiguration/default``.
   /// - Returns: The cached ``MetalSearchEngine`` instance for this capture pipeline.
   /// - Throws: ``AuraError/metalUnavailable(reason:)`` if Metal is not available.
   public func metalSearchEngine(
     config: MetalSearchConfiguration = .default
   ) throws -> MetalSearchEngine {
-    if let existing = _metalSearchEngine {
+    if let existing = _metalSearchEngine, _metalSearchConfig == config {
       return existing
     }
     let engine = try MetalSearchEngine(config: config)
     _metalSearchEngine = engine
+    _metalSearchConfig = config
     return engine
   }
 
@@ -139,11 +168,19 @@ public actor CaptureActor {
   ///     `config.storeCapacity` — ensuring capacity consistency between
   ///     the configuration and the store. Inject a Phase 2
   ///     `EncryptedSwiftDataStore` for production persistence.
-  public init(config: AuraConfiguration, store: (any SpatialEventStore)? = nil) {
+  ///   - modelProvider: Model provider for the lazily created
+  ///     ``IntelligenceActor``. `nil` uses ``SandboxedMLXModelProvider``,
+  ///     which refuses destructive operations such as compression.
+  public init(
+    config: AuraConfiguration,
+    store: (any SpatialEventStore)? = nil,
+    modelProvider: (any MLXModelProvider)? = nil
+  ) {
     self.config = config
     self.store = store ?? MemoryStore(capacity: config.storage.capacity)
     self.buffer = RingBuffer<SpatialEvent>(capacity: config.capture.bufferCapacity)
     self.router = HeuristicRouter()
+    self.defaultModelProvider = modelProvider
   }
 
   // MARK: - Public API

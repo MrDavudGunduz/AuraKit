@@ -61,7 +61,10 @@ struct CognitiveCompressionTests {
         survivalIndexThreshold: 0.1
       )
     )
-    let mockProvider = MockMLXModelProvider(mockResponse: "User gazed at bookshelf.")
+    let mockProvider = MockMLXModelProvider(
+      mockResponse: "User gazed at bookshelf.",
+      trustedForDestructiveOperations: true
+    )
     let intelligence = IntelligenceActor(config: config, store: store, modelProvider: mockProvider)
 
     // Store has only high-score event (score 1.0 > 0.1)
@@ -97,7 +100,10 @@ struct CognitiveCompressionTests {
       )
     )
     let mockSummary = "User examined the southeast case and moved to exit."
-    let mockProvider = MockMLXModelProvider(mockResponse: mockSummary)
+    let mockProvider = MockMLXModelProvider(
+      mockResponse: mockSummary,
+      trustedForDestructiveOperations: true
+    )
     let intelligence = IntelligenceActor(config: config, store: store, modelProvider: mockProvider)
 
     // Append 3 low-score events (score 0.2 < 0.5) and 1 high-score event (score 0.9)
@@ -179,7 +185,10 @@ struct CognitiveCompressionTests {
         survivalIndexThreshold: 0.5
       )
     )
-    let mockProvider = MockMLXModelProvider(mockResponse: "Telemetry test summary.")
+    let mockProvider = MockMLXModelProvider(
+      mockResponse: "Telemetry test summary.",
+      trustedForDestructiveOperations: true
+    )
     let captureActor = CaptureActor(config: config, store: store)
     _ = await captureActor.intelligenceActor(modelProvider: mockProvider)
     let memoryManager = MemoryManager(captureActor: captureActor)
@@ -214,7 +223,10 @@ struct CognitiveCompressionTests {
       )
     )
     let secretSummary = "Highly sensitive user secret text that must not leak into telemetry stream."
-    let mockProvider = MockMLXModelProvider(mockResponse: secretSummary)
+    let mockProvider = MockMLXModelProvider(
+      mockResponse: secretSummary,
+      trustedForDestructiveOperations: true
+    )
     let intelligence = IntelligenceActor(config: config, store: store, modelProvider: mockProvider)
 
     let event = SpatialEvent.gazeFixture(score: 0.1)

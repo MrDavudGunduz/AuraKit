@@ -12,12 +12,21 @@ import Foundation
 public protocol MLXModelProvider: Sendable {
   /// Whether this provider performs real model inference whose output may be
   /// trusted for **destructive** operations (e.g. cognitive compression, which
-  /// deletes source nodes after archiving the model's summary).
+  /// deletes source nodes after archiving the model's summary, or
+  /// ``IntelligenceActor/processAndPrune(_:referenceDate:)``).
   ///
-  /// Defaults to `true`. Placeholder providers that do not run a real model
-  /// (such as ``SandboxedMLXModelProvider`` today) return `false`, which makes
-  /// ``IntelligenceActor/compressIdleMemories()`` refuse to run instead of
-  /// replacing user memories with meaningless output.
+  /// Defaults to `false` (**fail-closed**): a provider must explicitly opt in
+  /// by returning `true`. Placeholder providers (such as
+  /// ``SandboxedMLXModelProvider`` today) keep the default, which makes
+  /// destructive APIs refuse to run instead of replacing or deleting user
+  /// memories based on meaningless output.
+  ///
+  /// ```swift
+  /// struct MyMLXProvider: MLXModelProvider {
+  ///     var isProductionInferenceBackend: Bool { true }
+  ///     func infer(prompt: String) async throws -> String { ... }
+  /// }
+  /// ```
   var isProductionInferenceBackend: Bool { get }
 
   /// Executes inference for a batch prompt on the on-device LLM.
@@ -28,7 +37,8 @@ public protocol MLXModelProvider: Sendable {
 }
 
 extension MLXModelProvider {
-  public var isProductionInferenceBackend: Bool { true }
+  /// Fail-closed default — see ``MLXModelProvider/isProductionInferenceBackend``.
+  public var isProductionInferenceBackend: Bool { false }
 }
 
 // MARK: - Mock Model Provider for CI & Unit Testing
@@ -41,6 +51,15 @@ public struct MockMLXModelProvider: MLXModelProvider, Sendable {
   /// Simulated processing delay in milliseconds.
   public let latencyMs: UInt64
 
+  /// Whether destructive operations may trust this mock's output.
+  ///
+  /// `false` by default so a mock can never accidentally delete real data;
+  /// tests that exercise compression/pruning opt in explicitly.
+  public let trustedForDestructiveOperations: Bool
+
+  /// Mirrors ``trustedForDestructiveOperations``.
+  public var isProductionInferenceBackend: Bool { trustedForDestructiveOperations }
+
   /// Custom score override handler if provided.
   private let customScoreProvider: (@Sendable (String) -> String)?
 
@@ -49,11 +68,14 @@ public struct MockMLXModelProvider: MLXModelProvider, Sendable {
   /// - Parameters:
   ///   - mockResponse: The string response to return for all inference calls.
   ///   - latencyMs: Simulated latency in milliseconds (default: 0ms).
+  ///   - trustedForDestructiveOperations: Allow destructive operations (tests only).
   public init(
     mockResponse: String,
-    latencyMs: UInt64 = 0
+    latencyMs: UInt64 = 0,
+    trustedForDestructiveOperations: Bool = false
   ) {
     self.latencyMs = latencyMs
+    self.trustedForDestructiveOperations = trustedForDestructiveOperations
     self.customScoreProvider = { _ in mockResponse }
   }
 
@@ -61,12 +83,15 @@ public struct MockMLXModelProvider: MLXModelProvider, Sendable {
   ///
   /// - Parameters:
   ///   - latencyMs: Simulated latency in milliseconds (default: 5ms).
+  ///   - trustedForDestructiveOperations: Allow destructive operations (tests only).
   ///   - customScoreProvider: Optional closure to format responses per prompt.
   public init(
     latencyMs: UInt64 = 5,
+    trustedForDestructiveOperations: Bool = false,
     customScoreProvider: (@Sendable (String) -> String)? = nil
   ) {
     self.latencyMs = latencyMs
+    self.trustedForDestructiveOperations = trustedForDestructiveOperations
     self.customScoreProvider = customScoreProvider
   }
 
@@ -98,7 +123,7 @@ public struct MockMLXModelProvider: MLXModelProvider, Sendable {
 ///   `mlx-swift` dependency and no code path that loads a real model. Supply your own
 ///   ``MLXModelProvider`` conformance or wait for `mlx-swift` integration (see ROADMAP.md).
 ///   Because of this, ``isProductionInferenceBackend`` is `false` and destructive
-///   operations such as ``IntelligenceActor/compressIdleMemories()`` refuse to run.
+///   operations such as ``IntelligenceActor/compressIdleMemories(referenceDate:)`` refuse to run.
 public struct SandboxedMLXModelProvider: MLXModelProvider, Sendable {
 
   /// Always `false`: this provider delegates to a mock and runs no real model.

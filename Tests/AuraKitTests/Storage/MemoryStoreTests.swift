@@ -35,7 +35,7 @@ struct MemoryStoreTests {
   @Test("count reflects appended items accurately")
   func testCountAccuracy() async {
     let store = MemoryStore(capacity: 64)
-    #expect(await store.count == 0)
+    #expect(await store.isEmpty)
 
     await store.append(.touchFixture())
     await store.append(.touchFixture())
@@ -47,7 +47,7 @@ struct MemoryStoreTests {
     let store = MemoryStore(capacity: 8)
     let all = await store.allEvents()
     #expect(all.isEmpty)
-    #expect(await store.count == 0)
+    #expect(await store.isEmpty)
   }
 
   // MARK: - Capacity & FIFO Eviction
@@ -143,7 +143,7 @@ struct MemoryStoreTests {
     #expect(await store.count == 8)
 
     await store.clear()
-    #expect(await store.count == 0)
+    #expect(await store.isEmpty)
     #expect(await store.allEvents().isEmpty)
   }
 
@@ -167,7 +167,7 @@ struct MemoryStoreTests {
     for _ in 0..<100 { await store.append(.touchFixture()) }
     await store.clear()
 
-    #expect(await store.count == 0)
+    #expect(await store.isEmpty)
     #expect(await store.allEvents().isEmpty)
   }
 

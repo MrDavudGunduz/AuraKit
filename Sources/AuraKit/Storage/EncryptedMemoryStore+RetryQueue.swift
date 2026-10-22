@@ -25,34 +25,23 @@ extension EncryptedMemoryStore {
   ///
   /// This is the **single source of truth** for the encrypt → insert →
   /// coalesce → save pipeline. Both ``appendInternal(_:)`` and
-  /// ``drainRetryQueue()`` delegate to this method, eliminating the
-  /// ~40-line duplication that previously existed between them.
+  /// ``drainRetryQueue()`` delegate to this method.
+  ///
+  /// The key and its version are resolved in **one** actor hop, so a
+  /// concurrent rotation can never pair a new key with an old version label.
   ///
   /// ## Write Coalescing
   ///
   /// The method increments ``pendingInsertCount`` after each insert and
-  /// triggers a `ModelContext.save()` when the count reaches ``saveThreshold``.
-  /// If the save fails, the context is rolled back and all pending inserts
-  /// are counted as dropped events.
+  /// commits via ``commitPendingChanges(context:eventID:)`` when the count
+  /// reaches ``saveThreshold``. Save failures are accounted there.
   ///
   /// - Parameter event: The spatial event to encrypt and insert.
-  /// - Throws: Any error from key retrieval, JSON encoding, AES-GCM encryption,
-  ///   or `ModelContext.save()`. Callers decide the recovery strategy
-  ///   (retry-queue vs permanent-drop) based on their context.
+  /// - Throws: Errors from key retrieval, JSON encoding or AES-GCM encryption.
+  ///   Callers decide the recovery strategy (retry-queue vs permanent-drop).
   func encryptAndInsert(_ event: SpatialEvent) async throws {
-    let key = try await keyManager.symmetricKey()
-    let currentKeyVersion = await keyManager.keyVersion
-    let plaintext = try encoder.encode(event)
-    let ciphertext = try encryptionService.encrypt(plaintext, using: key)
-
-    let node = RawMemoryNode(
-      id: event.id,
-      encryptedPayload: ciphertext,
-      score: event.score,
-      timestamp: event.timestamp,
-      eventType: event.kind.eventType,
-      keyVersion: currentKeyVersion
-    )
+    let current = try await keyManager.currentKeyAndVersion()
+    let node = try sealNode(for: event, key: current.key, keyVersion: current.version)
 
     modelContext.insert(node)
     pendingInsertCount += 1
@@ -60,22 +49,86 @@ extension EncryptedMemoryStore {
     // Write coalescing: only persist to disk when the pending insert
     // count reaches the configured threshold.
     if pendingInsertCount >= saveThreshold {
-      do {
-        try modelContext.save()
-        _totalEventsWritten += pendingInsertCount
-        pendingInsertCount = 0
-      } catch {
-        modelContext.rollback()
-        _droppedEventCount += pendingInsertCount
-        pendingInsertCount = 0
-        _dropContinuation.yield(DroppedEvent(
-          eventID: event.id,
-          reason: "Context save failed: \(error.localizedDescription)"
-        ))
-        Self.logger.error(
-          "[AuraKit] EncryptedMemoryStore: Failed to save context — \(error.localizedDescription). Context rolled back."
-        )
+      commitPendingChanges(context: "Context save", eventID: event.id)
+    }
+  }
+}
+
+// MARK: - EncryptedMemoryStore + Commit Path
+
+extension EncryptedMemoryStore {
+
+  /// Saves the `ModelContext` — the **only** place pending inserts are committed.
+  ///
+  /// - On success: every pending insert is counted in ``totalEventsWritten``
+  ///   and the ``capacity`` limit is enforced.
+  /// - On failure: the context is rolled back and **every** pending insert
+  ///   (including coalesced inserts from earlier `append()` calls) is counted
+  ///   in ``droppedEventCount`` and reported on ``droppedEventStream``.
+  ///
+  /// - Parameters:
+  ///   - context: Short description of the caller, used in logs and drop reasons.
+  ///   - eventID: The triggering event, reported when it is the only pending insert.
+  /// - Returns: `true` if the save succeeded (or there was nothing to save).
+  @discardableResult
+  func commitPendingChanges(context: String, eventID: UUID? = nil) -> Bool {
+    guard modelContext.hasChanges || pendingInsertCount > 0 else { return true }
+
+    let pending = pendingInsertCount
+    do {
+      try modelContext.save()
+      _totalEventsWritten += pending
+      pendingInsertCount = 0
+      if pending > 0 {
+        enforceCapacity()
       }
+      return true
+    } catch {
+      modelContext.rollback()
+      pendingInsertCount = 0
+      if pending > 0 {
+        _droppedEventCount += pending
+        _dropContinuation.yield(DroppedEvent(
+          eventID: pending == 1 ? eventID : nil,
+          reason: "\(context) failed (\(pending) events rolled back): \(error.localizedDescription)"
+        ))
+      }
+      Self.logger.error(
+        "[AuraKit] EncryptedMemoryStore: \(context) failed — \(error.localizedDescription). Context rolled back, \(pending) events dropped."
+      )
+      return false
+    }
+  }
+
+  /// Evicts the oldest raw nodes (by timestamp) until the store is within ``capacity``.
+  ///
+  /// Called only after a successful commit, so a rollback here can only undo
+  /// the evictions themselves — never user writes.
+  func enforceCapacity() {
+    guard capacity > 0 else { return }
+    do {
+      let total = try modelContext.fetchCount(FetchDescriptor<RawMemoryNode>())
+      let overflow = total - capacity
+      guard overflow > 0 else { return }
+
+      var descriptor = FetchDescriptor<RawMemoryNode>(
+        sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+      )
+      descriptor.fetchLimit = overflow
+      let victims = try modelContext.fetch(descriptor)
+      for node in victims {
+        modelContext.delete(node)
+      }
+      try modelContext.save()
+      _evictedEventCount += victims.count
+      Self.logger.debug(
+        "[AuraKit] EncryptedMemoryStore: Evicted \(victims.count) oldest nodes (capacity \(self.capacity))."
+      )
+    } catch {
+      modelContext.rollback()
+      Self.logger.error(
+        "[AuraKit] EncryptedMemoryStore: Capacity eviction failed — \(error.localizedDescription)."
+      )
     }
   }
 }
@@ -188,40 +241,45 @@ extension EncryptedMemoryStore {
 
 extension EncryptedMemoryStore {
 
-  /// Periodically drains the retry queue at the configured ``retryDrainInterval``.
-  ///
-  /// This loop runs as a long-lived `Task` launched during `init` when both
-  /// `retryDrainInterval > 0` and `retryQueueCapacity > 0`. It sleeps for
-  /// the configured interval, then drains any queued events — ensuring stale
-  /// retry events are re-attempted even when no new `append()` calls arrive.
-  ///
-  /// The loop is cooperative: it exits gracefully when the Task is cancelled
-  /// (e.g., via ``cancelScheduledRetryDrain()``).
-  func scheduledRetryDrainLoop() async {
-    let intervalNanoseconds = UInt64(retryDrainInterval * 1_000_000_000)
+  /// Drains the retry queue if it has entries. One iteration of the scheduled loop.
+  func drainRetryQueueIfNeeded() async {
+    guard !_retryQueue.isEmpty else { return }
 
-    while !Task.isCancelled {
-      do {
-        try await Task.sleep(nanoseconds: intervalNanoseconds)
-      } catch {
-        // Task.sleep throws CancellationError when the task is cancelled.
-        break
-      }
-
-      guard !_retryQueue.isEmpty else { continue }
-
-      Self.logger.debug(
-        "[AuraKit] EncryptedMemoryStore: Scheduled retry drain — \(self._retryQueue.count) events queued."
-      )
-      await drainRetryQueue()
-    }
+    Self.logger.debug(
+      "[AuraKit] EncryptedMemoryStore: Scheduled retry drain — \(self._retryQueue.count) events queued."
+    )
+    await drainRetryQueue()
   }
 
   /// Starts the scheduled retry drain loop if not already running.
+  ///
+  /// The loop sleeps for ``retryDrainInterval``, then drains any queued events —
+  /// ensuring stale retry events are re-attempted even when no new `append()`
+  /// calls arrive.
+  ///
+  /// ## Lifetime
+  ///
+  /// The task captures the store **weakly** and only upgrades to a strong
+  /// reference for the duration of a single drain. A previous implementation
+  /// held `self` strongly across the infinite loop, creating a store ↔ task
+  /// retain cycle that kept every store (and its `ModelContext`) alive forever.
+  /// The loop exits when the task is cancelled (``cancelScheduledRetryDrain()``
+  /// or `deinit`) or when the store has been deallocated.
   internal func startScheduledRetryDrain() {
     guard retryDrainTask == nil, retryDrainInterval > 0, retryQueueCapacity > 0 else { return }
+    let intervalNanoseconds = UInt64(retryDrainInterval * 1_000_000_000)
+
     retryDrainTask = Task { [weak self] in
-      await self?.scheduledRetryDrainLoop()
+      while !Task.isCancelled {
+        do {
+          try await Task.sleep(nanoseconds: intervalNanoseconds)
+        } catch {
+          // Task.sleep throws CancellationError when the task is cancelled.
+          return
+        }
+        guard let store = self else { return }
+        await store.drainRetryQueueIfNeeded()
+      }
     }
   }
 

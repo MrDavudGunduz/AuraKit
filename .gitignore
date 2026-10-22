@@ -19,3 +19,6 @@ DerivedData/
 
 # Authentication
 .netrc
+
+# Editor
+.vscode/

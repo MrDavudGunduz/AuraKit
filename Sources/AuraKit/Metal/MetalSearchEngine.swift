@@ -45,7 +45,7 @@ import os.log
 ///
 /// ```swift
 /// let engine = try MetalSearchEngine()
-/// let results = try engine.search(
+/// let results = try await engine.search(
 ///     query: queryEmbedding,
 ///     vectors: storedEmbeddings,
 ///     ids: storedIDs,
@@ -156,26 +156,36 @@ public actor MetalSearchEngine {
   ///     have exactly ``MetalSearchConfiguration/vectorDimension`` elements.
   ///   - ids: The UUIDs corresponding to each vector in `vectors`.
   ///     Must have the same count as `vectors`.
-  ///   - topK: The maximum number of results to return. Default: `10`.
+  ///   - topK: The maximum number of results to return. Default: `10`. Must be `>= 0`.
   /// - Returns: An array of ``VectorSearchResult`` sorted by descending similarity,
   ///   containing at most `topK` elements.
+  /// - Note: At most ``MetalSearchConfiguration/maxVectorCount`` vectors are
+  ///   searched; additional vectors are ignored and a warning is logged.
   /// - Throws: ``AuraError/vectorSearchFailed(reason:)`` if the search fails.
   public func search(
     query: [Float],
     vectors: [[Float]],
     ids: [UUID],
     topK: Int = 10
-  ) throws -> [VectorSearchResult] {
+  ) async throws -> [VectorSearchResult] {
     #if canImport(Metal)
     let signpostID = SignpostLogger.beginMetalSearch(vectorCount: vectors.count)
     defer { SignpostLogger.endMetalSearch(signpostID) }
 
+    guard topK >= 0 else {
+      throw AuraError.vectorSearchFailed(reason: "topK must be >= 0 (got \(topK)).")
+    }
     try validateSearchInputs(query: query, vectors: vectors, ids: ids)
-    guard !vectors.isEmpty else { return [] }
+    guard !vectors.isEmpty, topK > 0 else { return [] }
 
+    if vectors.count > config.maxVectorCount {
+      Self.logger.warning(
+        "[AuraKit] MetalSearchEngine: \(vectors.count) vectors exceed maxVectorCount \(self.config.maxVectorCount) — only the first \(self.config.maxVectorCount) are searched."
+      )
+    }
     let vectorCount = min(vectors.count, config.maxVectorCount)
     let flatVectors = try flattenVectors(vectors, count: vectorCount)
-    let rawSimilarities = try dispatchComputeKernel(
+    let rawSimilarities = try await dispatchComputeKernel(
       query: query,
       flatVectors: flatVectors,
       vectorCount: vectorCount
@@ -255,7 +265,7 @@ public actor MetalSearchEngine {
     query: [Float],
     flatVectors: [Float],
     vectorCount: Int
-  ) throws -> [Float] {
+  ) async throws -> [Float] {
     let dimension = config.vectorDimension
     let buffers = try createMetalBuffers(
       query: query,
@@ -264,7 +274,7 @@ public actor MetalSearchEngine {
       dimension: dimension
     )
 
-    try encodeAndSubmit(buffers: buffers, vectorCount: vectorCount)
+    try await encodeAndSubmit(buffers: buffers, vectorCount: vectorCount)
 
     return readBackResults(
       from: buffers.results,
@@ -319,8 +329,12 @@ public actor MetalSearchEngine {
     )
   }
 
-  /// Encodes the compute command and submits to the GPU, blocking until completion.
-  private func encodeAndSubmit(buffers: MetalBuffers, vectorCount: Int) throws {
+  /// Encodes the compute command and submits it to the GPU.
+  ///
+  /// Completion is awaited via `addCompletedHandler` + a checked continuation
+  /// instead of `waitUntilCompleted()`, which would block a Swift Concurrency
+  /// cooperative-pool thread for the full GPU round-trip.
+  private func encodeAndSubmit(buffers: MetalBuffers, vectorCount: Int) async throws {
     guard let commandBuffer = commandQueue.makeCommandBuffer(),
           let encoder = commandBuffer.makeComputeCommandEncoder() else {
       throw AuraError.vectorSearchFailed(
@@ -345,13 +359,17 @@ public actor MetalSearchEngine {
     )
     encoder.endEncoding()
 
-    commandBuffer.commit()
-    commandBuffer.waitUntilCompleted()
-
-    if let error = commandBuffer.error {
-      throw AuraError.vectorSearchFailed(
-        reason: "Metal compute command failed: \(error.localizedDescription)"
-      )
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+      commandBuffer.addCompletedHandler { completed in
+        if let error = completed.error {
+          continuation.resume(throwing: AuraError.vectorSearchFailed(
+            reason: "Metal compute command failed: \(error.localizedDescription)"
+          ))
+        } else {
+          continuation.resume()
+        }
+      }
+      commandBuffer.commit()
     }
   }
 

@@ -53,15 +53,10 @@ struct KeyRotationMigrationTests {
     let oldKey = try await keyManager.rotateKey()
     #expect(oldKey != nil)
 
-    // Events encrypted with old key are NOT decryptable with new key directly
-    // (the store still holds the old ciphertext, but keyManager now returns new key)
-    // The store's decrypt will try with the current (new) key and fail silently.
+    // Events encrypted with old key are decryptable through the versioned KeyRing
+    // before retired key material is purged.
     let postRotationEvents = await store.events(limit: 10)
-
-    // This verifies the expected behavior: after rotation, old ciphertexts
-    // can't be decrypted with the new key. The count should be 0 because
-    // decryption failures are silently skipped.
-    #expect(postRotationEvents.isEmpty)
+    #expect(postRotationEvents.count == 2)
   }
 
   // MARK: - Key Version Tracking on Nodes

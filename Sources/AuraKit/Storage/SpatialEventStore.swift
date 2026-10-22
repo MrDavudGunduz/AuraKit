@@ -91,6 +91,9 @@ public protocol SpatialEventStore: Actor {
   /// The total number of events currently in the store.
   var count: Int { get async }
 
+  /// Whether the store contains any events.
+  var isEmpty: Bool { get async }
+
   /// Flushes any pending writes that have been coalesced but not yet persisted.
   ///
   /// For stores with write coalescing (e.g., ``EncryptedMemoryStore`` with
@@ -152,6 +155,14 @@ extension SpatialEventStore {
   @discardableResult
   public func removeEvents(withIDs ids: Set<UUID>) async -> Int {
     0
+  }
+
+  /// Default implementation returns whether count is zero.
+  public var isEmpty: Bool {
+    get async {
+      // swiftlint:disable:next empty_count
+      await count == 0
+    }
   }
 
   /// Default implementation is a no-op.

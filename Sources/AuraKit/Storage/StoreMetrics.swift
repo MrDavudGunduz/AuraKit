@@ -31,6 +31,12 @@ public struct StoreMetrics: Sendable, Equatable {
   /// (e.g., Secure Enclave unavailability, disk I/O contention).
   public let retryQueueCount: Int
 
+  /// Total number of nodes evicted because the store's capacity was exceeded.
+  ///
+  /// Evictions are intentional (FIFO retention), so they do **not** affect
+  /// ``writeSuccessRate``.
+  public internal(set) var evictedEventCount: Int = 0
+
   /// The write success rate as a percentage `[0.0, 100.0]`.
   ///
   /// Returns `100.0` when no events have been processed (no failures, no writes).

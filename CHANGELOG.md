@@ -11,11 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `AuraKitLifecycleObserver`: Added platform-aware background transitions (`performExpiringActivity` on iOS/visionOS/watchOS/tvOS and `performActivity` on macOS) to ensure zero data loss while remaining fully compilable across all supported SDKs.
+- `KeyRotationMigrationTests`: Updated assertions to reflect the versioned `KeyRing` architecture where pre-rotation events remain decryptable prior to migration and key-purging.
 - `IntelligenceActor.compressIdleMemories()` no longer replaces stored memories with placeholder output. It now refuses to run (throws `AuraError.compressionFailed`) when the model provider is not a production backend, and rejects blank summaries — before any node is read or deleted.
 - Test target compile error: `SpatialEventPropertyTests` was missing `import CryptoKit`.
 
 ### Changed
 
+- **Key Rotation Architecture**: `KeyManager` now maintains a versioned `KeyRing` with per-version HKDF salts. `EncryptedMemoryStore` binds ciphertexts to rows via AES-GCM AAD (Additional Authenticated Data), preventing row-swapping and tampering.
+- **SPM Packaging**: Decoupled `SwiftLint` build tool plugin from package manifest dependencies to eliminate consumer build friction; linting runs as a standalone CI gate.
 - **BREAKING:** `compressIdleMemories()` now throws when no real `MLXModelProvider` is injected (the default `SandboxedMLXModelProvider` is a placeholder). Inject a production provider via `IntelligenceActor(modelProvider:)` / `CaptureActor.intelligenceActor(modelProvider:)`.
 - `MLXModelProvider` gains `isProductionInferenceBackend` (defaults to `true`; `SandboxedMLXModelProvider` returns `false`).
 - Wall-clock benchmark tests are tagged `.performance` and disabled unless `AURAKIT_RUN_PERFORMANCE=1`; CI runs them in a dedicated serial release job (`test-performance`). See `TESTING.md`.

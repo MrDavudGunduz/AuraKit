@@ -41,6 +41,52 @@ extension EncryptedMemoryStore {
     }
   }
 
+  /// Fetches snapshots whose **Survival Index** `SI(t) = S₀·Rⁿ·e^(-λt)` is
+  /// below `threshold` at `referenceDate`.
+  ///
+  /// Unlike ``fetchNodesBelowThreshold(_:)`` — which compares only the static
+  /// heuristic score `S₀` — this accounts for memory age (decay) and recall
+  /// frequency, which is what the cognitive compression model specifies.
+  ///
+  /// Operates on unencrypted metadata only — no decryption occurs.
+  ///
+  /// - Parameters:
+  ///   - threshold: Nodes with `SI < threshold` are returned.
+  ///   - decayConstant: λ (per second).
+  ///   - recallMultiplier: R (≥ 1).
+  ///   - referenceDate: The evaluation time `t₀`. Inject for deterministic tests.
+  /// - Returns: Matching snapshots sorted by timestamp (oldest first).
+  public func fetchNodesBelowSurvivalIndex(
+    threshold: Double,
+    decayConstant: Double = AuraConfiguration.defaultDecayConstant,
+    recallMultiplier: Double = AuraConfiguration.defaultRecallMultiplier,
+    referenceDate: Date = Date()
+  ) -> [RawMemoryNodeSnapshot] {
+    do {
+      // S₀·Rⁿ·e^(-λt) ≤ S₀·Rⁿ and Rⁿ ≥ 1, so no pre-filter on score is
+      // sound in general; fetch metadata and evaluate in Swift.
+      let descriptor = FetchDescriptor<RawMemoryNode>(
+        sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+      )
+      return try modelContext.fetch(descriptor)
+        .compactMap { RawMemoryNodeSnapshot(node: $0) }
+        .filter { snapshot in
+          SurvivalIndex.calculate(
+            initialScore: snapshot.score,
+            recallCount: snapshot.recalled,
+            ageInSeconds: referenceDate.timeIntervalSince(snapshot.timestamp),
+            decayConstant: decayConstant,
+            recallMultiplier: recallMultiplier
+          ) < threshold
+        }
+    } catch {
+      Self.logger.error(
+        "[AuraKit] EncryptedMemoryStore: fetchNodesBelowSurvivalIndex failed — \(error.localizedDescription)"
+      )
+      return []
+    }
+  }
+
   /// Calculates the total `encryptedPayload` byte size for nodes matching
   /// the given UUIDs.
   ///
@@ -109,16 +155,32 @@ extension EncryptedMemoryStore {
     // to ensure a clean ModelContext state.
     await flushPendingWrites()
 
+    let targetIDs = sourceNodeIDs
+    let predicate = #Predicate<RawMemoryNode> { targetIDs.contains($0.id) }
+
+    // Phase 0: Verify sources still exist. Between selection and commit the
+    // actor may have been re-entered (LLM inference is long-running), so some
+    // or all sources may already be gone.
+    let existingCount: Int
+    do {
+      existingCount = try modelContext.fetchCount(FetchDescriptor<RawMemoryNode>(predicate: predicate))
+    } catch {
+      throw AuraError.compressionFailed(
+        reason: "Failed to verify source nodes: \(error.localizedDescription)"
+      )
+    }
+    guard existingCount > 0 else {
+      throw AuraError.compressionFailed(
+        reason: "None of the \(sourceNodeIDs.count) source nodes exist any more — archive not created."
+      )
+    }
+
     // Phase 1: Insert the archive node.
     modelContext.insert(archiveNode)
 
     // Phase 2: Delete source nodes.
-    let targetIDs = sourceNodeIDs
     do {
-      try modelContext.delete(
-        model: RawMemoryNode.self,
-        where: #Predicate<RawMemoryNode> { targetIDs.contains($0.id) }
-      )
+      try modelContext.delete(model: RawMemoryNode.self, where: predicate)
     } catch {
       modelContext.rollback()
       throw AuraError.compressionFailed(
@@ -130,12 +192,11 @@ extension EncryptedMemoryStore {
     do {
       try modelContext.save()
 
-      let deletedCount = sourceNodeIDs.count
       Self.logger.info(
-        "[AuraKit] EncryptedMemoryStore: Compression committed — 1 archive created, \(deletedCount) source nodes deleted."
+        "[AuraKit] EncryptedMemoryStore: Compression committed — 1 archive created, \(existingCount) source nodes deleted."
       )
 
-      return sourceNodeIDs.count
+      return existingCount
     } catch {
       // Rollback ensures no partial state: the archive is removed and
       // source nodes are restored to their pre-transaction state.

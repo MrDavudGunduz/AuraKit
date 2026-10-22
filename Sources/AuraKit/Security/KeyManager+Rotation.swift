@@ -14,92 +14,145 @@ extension KeyManager {
 
   // MARK: - Rotate
 
-  /// Rotates the encryption key by generating a new HKDF salt and deriving a fresh key.
+  /// Rotates the encryption key by creating key material for a **new** key version.
   ///
-  /// The rotation process:
-  /// 1. Preserves the current symmetric key as ``previousKey`` for re-encryption migration
-  /// 2. Generates a new cryptographically random 32-byte salt
-  /// 3. Replaces the existing salt in the Keychain
-  /// 4. Derives a new symmetric key from the same Secure Enclave private key + new salt
-  /// 5. Increments ``keyVersion``
+  /// The rotation process is ordered so that every failure leaves the manager in
+  /// its previous, fully consistent state:
   ///
-  /// The new key is cached in actor memory only — it is **not** written to
-  /// the Keychain (see ``symmetricKey()`` for the security rationale). The
-  /// salt swap alone invalidates the old key: any future re-derivation
-  /// produces a different key than ``previousKey``.
+  /// 1. Resolve the current key (preserved as ``previousKey`` and in the retired cache)
+  /// 2. Generate a fresh 32-byte salt and store it under the **new** version's account
+  /// 3. Derive the new symmetric key
+  /// 4. Persist the new version counter — the commit point
+  /// 5. Swap in-memory state
   ///
-  /// After rotation, use the returned previous key to decrypt existing ciphertext,
-  /// then re-encrypt with the new key obtained from ``symmetricKey()``.
+  /// Salts of earlier versions are **retained**, so records sealed with them stay
+  /// decryptable across app restarts. Re-encrypt them with
+  /// ``EncryptedMemoryStore/reencryptStaleNodes(batchSize:)`` and then call
+  /// ``purgeRetiredKeyMaterial(olderThan:)`` (or
+  /// ``EncryptedMemoryStore/completeKeyRotationMigration()``) to retire them.
   ///
   /// ```swift
-  /// let oldKey = try await keyManager.rotateKey()
-  /// let newKey = try await keyManager.symmetricKey()
-  /// // Decrypt with oldKey, re-encrypt with newKey
+  /// try await keyManager.rotateKey()
+  /// try await store.reencryptStaleNodes()
+  /// try await store.completeKeyRotationMigration()
   /// ```
   ///
-  /// - Returns: The **previous** symmetric key (before rotation), for re-encryption migration.
-  ///   Returns `nil` if no key was previously derived (first-time rotation on an unconfigured
-  ///   manager).
-  /// - Throws: ``AuraError/keyRotationFailed(reason:)`` if salt generation or key
-  ///   derivation fails during rotation.
+  /// - Returns: The **previous** symmetric key (before rotation), or `nil` if it
+  ///   could not be resolved.
+  /// - Throws: ``AuraError/keyRotationFailed(reason:)`` if salt generation, key
+  ///   derivation, or version persistence fails. State is unchanged on failure.
   @discardableResult
   public func rotateKey() throws -> SymmetricKey? {
-    // Preserve current state for migration and fail-safe rollback
-    let oldKey = cachedKey
-    let priorPreviousKey = _previousKey
-    let priorKeyVersion = _keyVersion
-    _previousKey = oldKey
+    try ensureVersionBootstrapped()
+
+    let oldVersion = _keyVersion
+    let newVersion = oldVersion + 1
+    let oldKey = try? currentKeyAndVersion().key
 
     do {
-      // Generate a fresh salt, replacing the old one in Keychain.
-      let newSalt = try generateAndStoreSalt()
+      // Steps 2–3: new material for the new version only. Nothing that existing
+      // ciphertext depends on is modified.
+      let newKey = try deriveKey(forVersion: newVersion, createSaltIfMissing: true)
 
-      // Clear cached key so deriveKey uses the new salt.
-      cachedKey = nil
+      // Step 4: commit point. Until the version counter is persisted, a crash
+      // leaves the old version current and the new salt merely orphaned.
+      try persistKeyVersion(newVersion)
 
-      // Derive new key with the fresh salt. Cached in actor memory only —
-      // deliberately not written to the Keychain.
-      let newKey = try deriveKeyWithSalt(newSalt)
+      // Step 5: in-memory swap.
+      if let oldKey {
+        retiredKeyCache[oldVersion] = oldKey
+      }
+      _previousKey = oldKey
       cachedKey = newKey
-      _keyVersion += 1
-      try persistKeyVersion()
+      _keyVersion = newVersion
 
-      KeyManager.logger.info(
-        "[AuraKit] KeyManager: Key rotated successfully. Version: \(self._keyVersion)."
-      )
-
+      KeyManager.logger.info("[AuraKit] KeyManager: Key rotated successfully. Version: \(newVersion).")
       return oldKey
     } catch {
-      // Restore full previous state — fail-safe rollback.
-      // Nothing to undo in the Keychain: the salt write is the only durable
-      // side effect, and a failed derivation after that simply means the
-      // next symmetricKey() call re-derives from the (already-swapped) salt.
-      cachedKey = oldKey
-      _previousKey = priorPreviousKey
-      _keyVersion = priorKeyVersion
+      // Best-effort cleanup of the orphaned salt. Never touches older versions.
+      discardOrphanedSalt(forVersion: newVersion)
 
       if let auraError = error as? AuraError { throw auraError }
-      throw AuraError.keyRotationFailed(
-        reason: "Key rotation failed: \(error.localizedDescription)"
+      throw AuraError.keyRotationFailed(reason: "Key rotation failed: \(error.localizedDescription)")
+    }
+  }
+
+  /// Removes salt material created for a version that never became current.
+  private func discardOrphanedSalt(forVersion version: Int) {
+    if isStaticMode {
+      staticSalts[version] = nil
+    } else {
+      KeychainHelper.delete(
+        service: KeyManager.keychainService,
+        account: KeyManager.saltKeychainAccount(forVersion: version)
       )
     }
+  }
+
+  // MARK: - Retirement
+
+  /// Permanently deletes key material for every version **older** than `minimumVersion`.
+  ///
+  /// Call this only after all records sealed with those versions have been
+  /// re-encrypted — afterwards they can never be decrypted again. Prefer
+  /// ``EncryptedMemoryStore/completeKeyRotationMigration()``, which verifies that
+  /// no stale records remain before purging.
+  ///
+  /// - Parameter minimumVersion: The oldest version to keep. Clamped to the
+  ///   current version (the current key can never be purged).
+  /// - Throws: ``AuraError/keychainOperationFailed(operation:status:)`` if a
+  ///   Keychain deletion fails.
+  public func purgeRetiredKeyMaterial(olderThan minimumVersion: Int) throws {
+    try ensureVersionBootstrapped()
+    let cutoff = min(minimumVersion, _keyVersion)
+    guard cutoff > 0 else { return }
+
+    for version in 0..<cutoff {
+      retiredKeyCache[version] = nil
+      if isStaticMode {
+        staticSalts[version] = nil
+      } else {
+        try KeychainHelper.deleteOrThrow(
+          service: KeyManager.keychainService,
+          account: KeyManager.saltKeychainAccount(forVersion: version)
+        )
+      }
+    }
+
+    if !isStaticMode {
+      // The legacy single salt always belonged to some version < current once a
+      // versioned salt for the current version exists.
+      try KeychainHelper.deleteOrThrow(
+        service: KeyManager.keychainService,
+        account: KeyManager.saltKeychainAccount
+      )
+    }
+
+    if cutoff >= _keyVersion {
+      _previousKey = nil
+    }
+
+    KeyManager.logger.info("[AuraKit] KeyManager: Purged retired key material for versions < \(cutoff).")
   }
 
   // MARK: - Previous Key Access
 
   /// The previous symmetric key, preserved after the most recent ``rotateKey()`` call.
   ///
-  /// Use this to decrypt existing ciphertext during a re-encryption migration.
-  /// Returns `nil` if no rotation has occurred or if ``clearPreviousKey()``
-  /// has been called.
+  /// Returns `nil` if no rotation has occurred in this process or if
+  /// ``clearPreviousKey()`` has been called. Records sealed with older versions
+  /// remain decryptable through ``symmetricKey(forVersion:)`` regardless.
   public var previousKey: SymmetricKey? { _previousKey }
 
   /// Clears the preserved previous key from memory.
   ///
-  /// Call this after completing a re-encryption migration to reduce the
-  /// in-memory key surface. After this call, ``previousKey`` returns `nil`.
+  /// This affects only the convenience in-memory copy; retired key material in
+  /// the Keychain is removed by ``purgeRetiredKeyMaterial(olderThan:)``.
   public func clearPreviousKey() {
     _previousKey = nil
+    if _keyVersion > 0 {
+      retiredKeyCache[_keyVersion - 1] = nil
+    }
     KeyManager.logger.info("[AuraKit] KeyManager: Previous key cleared.")
   }
 
@@ -107,7 +160,11 @@ extension KeyManager {
 
   /// The current key version, incremented on each ``rotateKey()`` call.
   ///
-  /// Starts at `0` and monotonically increases. Useful for tracking
-  /// which version of the key was used to encrypt a given record.
-  public var keyVersion: Int { _keyVersion }
+  /// Starts at `0` and monotonically increases. If the Keychain cannot be read
+  /// yet (e.g., device locked before first unlock), this returns the last known
+  /// value; sealing operations use ``currentKeyAndVersion()``, which throws instead.
+  public var keyVersion: Int {
+    try? ensureVersionBootstrapped()
+    return _keyVersion
+  }
 }

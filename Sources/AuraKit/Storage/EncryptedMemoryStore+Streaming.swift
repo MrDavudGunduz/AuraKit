@@ -69,69 +69,68 @@ extension EncryptedMemoryStore {
     offset: Int = 0,
     batchSize: Int = AuraConfiguration.defaultStreamBatchSize
   ) async -> AsyncStream<SpatialEvent> {
-    // Resolve the key once before entering the stream — avoids repeated
-    // async key lookups per batch.
-    let key: SymmetricKey
-
+    // Fail fast: if the current key is unavailable, return a finished stream
+    // rather than a stream that silently yields nothing per batch.
     do {
-      key = try await keyManager.symmetricKey()
+      _ = try await keyManager.currentKeyAndVersion()
     } catch {
       Self.logger.error(
         "[AuraKit] EncryptedMemoryStore: Stream setup failed — \(error.localizedDescription)"
       )
-      // Return an immediately-finished stream on key retrieval failure
       return AsyncStream { $0.finish() }
     }
 
     let effectiveBatchSize = max(batchSize, 1)
-    let maxYield = limit ?? Int.max
-    let baseOffset = offset
+    let maxYield = limit.map { max($0, 0) } ?? Int.max
+    let baseOffset = max(offset, 0)
 
     return AsyncStream { continuation in
       // Launch a Task that calls back into the actor for each batch.
-      // This provides truly lazy evaluation: the Task suspends between
-      // batches, yielding control until the consumer pulls the next event.
       //
       // ## Actor Isolation Safety
       //
-      // The Task captures `self` (the actor) and calls `streamBatch()`,
-      // which is an actor-isolated method. This ensures `modelContext`
-      // access is always serialised through the actor's executor —
-      // no Sendable boundary violations occur.
+      // The Task calls `streamBatch()`, an actor-isolated method, so all
+      // `modelContext` access is serialised through the actor's executor.
+      //
+      // ## Cancellation
+      //
+      // The producer is cancelled when the consumer stops iterating (or the
+      // stream is deallocated), so abandoned streams never keep decrypting.
       let store = self
-      let streamKey = key
 
-      Task {
+      let producer = Task {
         var yieldedCount = 0
         var currentOffset = baseOffset
 
-        while yieldedCount < maxYield {
+        while yieldedCount < maxYield, !Task.isCancelled {
           let remaining = maxYield - yieldedCount
           let fetchCount = min(effectiveBatchSize, remaining)
 
-          let events = await store.streamBatch(
-            offset: currentOffset,
-            limit: fetchCount,
-            key: streamKey
-          )
-
           // No more nodes available — we've exhausted the store.
-          guard let batch = events, !batch.isEmpty else { break }
+          guard let batch = await store.streamBatch(offset: currentOffset, limit: fetchCount) else {
+            break
+          }
 
-          for event in batch {
+          for event in batch.events {
             continuation.yield(event)
             yieldedCount += 1
           }
 
-          currentOffset += batch.count
+          // Advance by the number of *rows* read, not events decrypted, so a
+          // corrupted record never shifts or repeats subsequent pages.
+          currentOffset += batch.rowCount
 
-          // If we got fewer events than requested, there are no more to fetch.
-          if batch.count < fetchCount {
+          // If we got fewer rows than requested, there are no more to fetch.
+          if batch.rowCount < fetchCount {
             break
           }
         }
 
         continuation.finish()
+      }
+
+      continuation.onTermination = { _ in
+        producer.cancel()
       }
     }
   }
@@ -150,106 +149,102 @@ extension EncryptedMemoryStore {
 
   /// Fetches and decrypts a single batch of nodes within the actor's isolation domain.
   ///
-  /// This method is the bridge between the `Task`-driven streaming loop and
-  /// the actor-isolated `ModelContext`. By keeping all `modelContext` access
-  /// within this method, we guarantee that the non-Sendable `ModelContext`
-  /// never escapes the actor's isolation boundary.
+  /// Nodes are snapshotted into `Sendable` ``EncryptedRecord`` values before
+  /// the key-ring lookup (the only suspension point), so reentrant mutations
+  /// can never be observed mid-batch.
   ///
   /// ## Parallel Decryption
   ///
-  /// Decryption is performed in parallel using a `ThrowingTaskGroup` with a
-  /// sliding-window concurrency limit of ``maxConcurrentDecryption``. This
-  /// prevents spawning unbounded child tasks for large batches while keeping
-  /// all available cores busy.
-  ///
-  /// Results are collected as `(index, event)` tuples and sorted by the
-  /// original index to preserve chronological order.
+  /// Decryption runs in a `TaskGroup` with a sliding-window concurrency limit
+  /// of ``maxConcurrentDecryption``. Each child returns `nil` on failure, so a
+  /// single corrupted or tampered record is counted and skipped instead of
+  /// aborting the whole batch.
   ///
   /// - Parameters:
   ///   - offset: The fetch offset for this batch.
   ///   - limit: Maximum number of nodes to fetch.
-  ///   - key: The AES-GCM symmetric key for decryption.
-  /// - Returns: Decrypted events, or `nil` if the fetch failed.
+  /// - Returns: The decrypted events (chronological) and the number of rows
+  ///   read, or `nil` if the fetch failed, returned no rows, or no key is available.
   private func streamBatch(
     offset: Int,
-    limit: Int,
-    key: SymmetricKey
-  ) async -> [SpatialEvent]? {
+    limit: Int
+  ) async -> (events: [SpatialEvent], rowCount: Int)? {
+    let records: [EncryptedRecord]
     do {
-        var descriptor = FetchDescriptor<RawMemoryNode>(
-            sortBy: [SortDescriptor(\.timestamp, order: .forward)]
-        )
-        descriptor.fetchLimit = limit
-        descriptor.fetchOffset = offset
-
-        let nodes = try modelContext.fetch(descriptor)
-        guard !nodes.isEmpty else { return nil }
-
-        // Capture encrypted payloads before entering the task group.
-        // RawMemoryNode may not be Sendable, but Data is.
-        let payloads: [(Int, Data)] = nodes.enumerated().map { ($0.offset, $0.element.encryptedPayload) }
-
-        // Parallel decryption with bounded concurrency.
-        // Uses a sliding-window pattern: enqueue up to `maxConcurrent` tasks,
-        // then wait for one to complete before enqueuing the next.
-        let maxConcurrent = Self.maxConcurrentDecryption
-        let service = encryptionService
-        let jsonDecoder = decoder
-        var decryptedTuples: [(Int, SpatialEvent)] = []
-        decryptedTuples.reserveCapacity(payloads.count)
-
-        do {
-            try await withThrowingTaskGroup(of: (Int, SpatialEvent).self) { group in
-                var nextIndex = 0
-                var inFlight = 0
-
-                // Seed the group with initial tasks up to the concurrency limit.
-                while nextIndex < payloads.count, inFlight < maxConcurrent {
-                    let (index, payload) = payloads[nextIndex]
-                    group.addTask {
-                        let plaintext = try service.decrypt(payload, using: key)
-                        let event = try jsonDecoder.decode(SpatialEvent.self, from: plaintext)
-                        return (index, event)
-                    }
-                    nextIndex += 1
-                    inFlight += 1
-                }
-
-                // As each task completes, collect its result and enqueue the next.
-                for try await tuple in group {
-                    decryptedTuples.append(tuple)
-                    inFlight -= 1
-
-                    if nextIndex < payloads.count {
-                        let (index, payload) = payloads[nextIndex]
-                        group.addTask {
-                            let plaintext = try service.decrypt(payload, using: key)
-                            let event = try jsonDecoder.decode(SpatialEvent.self, from: plaintext)
-                            return (index, event)
-                        }
-                        nextIndex += 1
-                        inFlight += 1
-                    }
-                }
-            }
-        } catch {
-            // Any decryption error aborts the batch.
-            incrementDecryptionFailure()
-            Self.logger.error("[AuraKit] EncryptedMemoryStore: Stream batch decryption failed — \(error.localizedDescription)")
-            return nil
-        }
-
-        // Restore original chronological order.
-        let sortedEvents = decryptedTuples
-            .sorted { $0.0 < $1.0 }
-            .map { $0.1 }
-
-        return sortedEvents
+      var descriptor = FetchDescriptor<RawMemoryNode>(
+        sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+      )
+      descriptor.fetchLimit = limit
+      descriptor.fetchOffset = offset
+      records = try modelContext.fetch(descriptor).map(EncryptedRecord.init(node:))
     } catch {
-        Self.logger.error(
-            "[AuraKit] EncryptedMemoryStore: Stream batch fetch failed at offset \(offset) — \(error.localizedDescription)"
-        )
-        return nil
+      Self.logger.error(
+        "[AuraKit] EncryptedMemoryStore: Stream batch fetch failed at offset \(offset) — \(error.localizedDescription)"
+      )
+      return nil
     }
+    guard !records.isEmpty else { return nil }
+
+    let ring: KeyRing
+    do {
+      ring = try await keyManager.keyRing(for: Set(records.map(\.keyVersion)))
+    } catch {
+      Self.logger.error(
+        "[AuraKit] EncryptedMemoryStore: Stream key retrieval failed — \(error.localizedDescription)"
+      )
+      return nil
+    }
+
+    let signpostID = SignpostLogger.beginDecrypt(count: records.count)
+    defer { SignpostLogger.endDecrypt(signpostID) }
+
+    let maxConcurrent = Self.maxConcurrentDecryption
+    let service = encryptionService
+    let jsonDecoder = decoder
+
+    var slots = [SpatialEvent?](repeating: nil, count: records.count)
+    var failures = 0
+
+    await withTaskGroup(of: (Int, SpatialEvent?).self) { group in
+      var nextIndex = 0
+
+      func enqueueNext() {
+        let index = nextIndex
+        let record = records[index]
+        group.addTask {
+          (index, try? Self.open(record, ring: ring, service: service, decoder: jsonDecoder))
+        }
+        nextIndex += 1
+      }
+
+      // Seed the group with initial tasks up to the concurrency limit.
+      while nextIndex < records.count, nextIndex < maxConcurrent {
+        enqueueNext()
+      }
+
+      // As each task completes, collect its result and enqueue the next.
+      for await (index, event) in group {
+        if let event {
+          slots[index] = event
+        } else {
+          failures += 1
+        }
+        if nextIndex < records.count {
+          enqueueNext()
+        }
+      }
+    }
+
+    if failures > 0 {
+      for _ in 0..<failures {
+        incrementDecryptionFailure()
+      }
+      Self.logger.error(
+        "[AuraKit] EncryptedMemoryStore: \(failures) record(s) failed to decrypt in stream batch at offset \(offset) — skipped."
+      )
+    }
+
+    // Slots preserve the original chronological order.
+    return (slots.compactMap { $0 }, records.count)
   }
 }

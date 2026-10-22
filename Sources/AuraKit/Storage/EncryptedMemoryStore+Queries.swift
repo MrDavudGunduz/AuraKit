@@ -102,6 +102,29 @@ extension EncryptedMemoryStore {
     }
   }
 
+  /// Returns the `recalled` counters for many nodes in a single fetch.
+  ///
+  /// - Parameter ids: Node UUIDs to look up.
+  /// - Returns: A dictionary of `id → recalled`; IDs not in the store are absent.
+  public func recalledCounts(for ids: Set<UUID>) async -> [UUID: Int] {
+    guard !ids.isEmpty else { return [:] }
+    do {
+      let targetIDs = ids
+      let descriptor = FetchDescriptor<RawMemoryNode>(
+        predicate: #Predicate<RawMemoryNode> { targetIDs.contains($0.id) }
+      )
+      return Dictionary(
+        try modelContext.fetch(descriptor).map { ($0.id, $0.recalled) },
+        uniquingKeysWith: max
+      )
+    } catch {
+      Self.logger.error(
+        "[AuraKit] EncryptedMemoryStore: recalledCounts failed — \(error.localizedDescription)"
+      )
+      return [:]
+    }
+  }
+
   /// Fetches the raw ciphertext for a specific node, for SQLite inspection
   /// and ciphertext verification during testing.
   ///
@@ -145,7 +168,8 @@ extension EncryptedMemoryStore {
       totalEventsWritten: _totalEventsWritten,
       droppedEventCount: _droppedEventCount,
       decryptionFailureCount: _decryptionFailureCount,
-      retryQueueCount: _retryQueue.count
+      retryQueueCount: _retryQueue.count,
+      evictedEventCount: _evictedEventCount
     )
   }
 
@@ -306,6 +330,10 @@ extension EncryptedMemoryStore {
   /// - Returns: The number of nodes deleted.
   @discardableResult
   public func deleteNodes(belowScore threshold: Double) async -> Int {
+    // Commit coalesced inserts first: the save below would otherwise persist
+    // them without accounting, and a rollback would silently discard them.
+    await flushPendingWrites()
+
     do {
       // Phase 1: Count matching nodes without materialising them.
       let countDescriptor = FetchDescriptor<RawMemoryNode>(
@@ -365,23 +393,11 @@ extension EncryptedMemoryStore {
   public func flushPendingWrites() async {
     guard pendingInsertCount > 0 else { return }
 
-    do {
-      try modelContext.save()
-      _totalEventsWritten += pendingInsertCount
+    let pending = pendingInsertCount
+    if commitPendingChanges(context: "Flush save") {
       Self.logger.debug(
-        "[AuraKit] EncryptedMemoryStore: Flushed \(self.pendingInsertCount) pending inserts."
+        "[AuraKit] EncryptedMemoryStore: Flushed \(pending) pending inserts."
       )
-      pendingInsertCount = 0
-    } catch {
-      modelContext.rollback()
-      _droppedEventCount += pendingInsertCount
-      _dropContinuation.yield(DroppedEvent(
-        reason: "Flush save failed (\(pendingInsertCount) events): \(error.localizedDescription)"
-      ))
-      Self.logger.error(
-        "[AuraKit] EncryptedMemoryStore: flushPendingWrites() failed — \(error.localizedDescription). Context rolled back."
-      )
-      pendingInsertCount = 0
     }
   }
 
@@ -414,7 +430,8 @@ extension EncryptedMemoryStore {
   /// Removes events with the specified IDs from the SwiftData store.
   ///
   /// - Parameter ids: Set of event UUIDs to remove.
-  /// - Returns: Number of nodes removed.
+  /// - Returns: Number of nodes actually removed (IDs that do not exist are
+  ///   not counted).
   @discardableResult
   public func removeEvents(withIDs ids: Set<UUID>) async -> Int {
     guard !ids.isEmpty else { return 0 }
@@ -422,14 +439,18 @@ extension EncryptedMemoryStore {
 
     do {
       let targetIDs = ids
-      try modelContext.delete(
-        model: RawMemoryNode.self,
-        where: #Predicate<RawMemoryNode> { targetIDs.contains($0.id) }
-      )
+      let predicate = #Predicate<RawMemoryNode> { targetIDs.contains($0.id) }
+      let existing = try modelContext.fetchCount(FetchDescriptor<RawMemoryNode>(predicate: predicate))
+      guard existing > 0 else { return 0 }
+
+      try modelContext.delete(model: RawMemoryNode.self, where: predicate)
       try modelContext.save()
-      return ids.count
+      return existing
     } catch {
       modelContext.rollback()
+      Self.logger.error(
+        "[AuraKit] EncryptedMemoryStore: removeEvents failed — \(error.localizedDescription). Context rolled back."
+      )
       return 0
     }
   }

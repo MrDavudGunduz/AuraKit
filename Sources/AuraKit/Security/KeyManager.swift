@@ -23,56 +23,54 @@ import os.log
 /// 1. **Key Generation** — Creates a P256 key agreement key pair in the Secure Enclave
 ///    (hardware-bound, non-exportable on physical devices; software fallback on simulators).
 /// 2. **Key Derivation** — Derives a 256-bit AES key from the Secure Enclave private key
-///    using HKDF-SHA256, with a per-installation salt stored in the Keychain.
-/// 3. **Key Retrieval** — Caches the derived symmetric key in-memory for the lifetime of
-///    the actor. The Secure Enclave private key is never extracted into process memory.
-/// 4. **Key Rotation** — Generates a new salt and derives a fresh symmetric key, while
-///    preserving the previous key for data re-encryption migration.
+///    using HKDF-SHA256, with a **per-key-version** salt stored in the Keychain.
+/// 3. **Key Retrieval** — Caches derived symmetric keys in-memory. The Secure Enclave
+///    private key is never extracted into process memory.
+/// 4. **Key Rotation** — Generates a salt for a **new** key version. Salts of previous
+///    versions are retained, so existing ciphertext stays decryptable across app
+///    restarts until it has been re-encrypted and the retired material is purged
+///    explicitly via ``purgeRetiredKeyMaterial(olderThan:)``.
 ///
-/// ## Key Rotation
+/// ## Versioned Key Material
 ///
-/// Key rotation replaces the HKDF salt used for key derivation, producing a new
-/// symmetric key from the same Secure Enclave private key. The previous key is
-/// preserved in memory until the next rotation or until ``clearPreviousKey()``
-/// is called, enabling batch re-encryption of existing ciphertext.
+/// Every key version `v` has its own HKDF salt (Keychain account `hkdf-salt.v{v}`).
+/// The AES key for version `v` is `HKDF(SE-ECDH secret, salt_v)`. Each encrypted
+/// record stores the version it was sealed with, so readers always select the
+/// correct key — rotation never strands existing data.
 ///
 /// ```swift
-/// let previousKey = try await keyManager.rotateKey()
-/// // Re-encrypt existing data: decrypt with previousKey, encrypt with new key
-/// let newKey = try await keyManager.symmetricKey()
+/// try await keyManager.rotateKey()                       // v → v+1, old salt retained
+/// try await store.reencryptStaleNodes()                  // migrate records to v+1
+/// try await store.completeKeyRotationMigration()         // purge retired salts
 /// ```
 ///
 /// ## Threat Model
 ///
 /// | Threat                           | Mitigation                                              |
 /// |----------------------------------|---------------------------------------------------------|
-/// | Key extraction via memory dump   | Private key stays in Secure Enclave hardware             |
-/// | Salt guessing                    | Salt is 32 random bytes, stored in Keychain              |
-/// | Keychain backup exfiltration     | `.whenUnlockedThisDeviceOnly` prevents cloud backup      |
-/// | Simulator key weakness           | Software fallback is DEBUG-only; CI tests remain valid   |
-/// | Long-lived single key            | ``rotateKey()`` enables periodic key rotation            |
+/// | Offline copy of the database     | Payloads are AES-GCM ciphertext; key never on disk       |
+/// | Keychain backup exfiltration     | `.whenUnlockedThisDeviceOnly` prevents backup/migration  |
+/// | Salt guessing                    | Salts are 32 random bytes, stored in Keychain            |
+/// | Long-lived single key            | ``rotateKey()`` + store re-encryption migration          |
+/// | Record swapping / relabelling    | Ciphertext is bound to record metadata via AES-GCM AAD   |
+///
+/// - Important: The derived AES key is cached in **process memory** while in use.
+///   Code executing inside the app process can always ask the Secure Enclave to
+///   re-derive it, so the Secure Enclave protects key material *at rest* and
+///   against offline extraction — **not** against a compromised app process.
+///   ``clearCachedKeyForBackground()`` minimises the in-memory exposure window.
 ///
 /// ## Thread Safety
 ///
 /// All operations are actor-isolated. Concurrent callers serialise automatically.
-///
-/// ## File Organisation
-///
-/// `KeyManager` is split across multiple files for single-responsibility compliance:
-///
-/// | File                          | Responsibility                              |
-/// |-------------------------------|---------------------------------------------|
-/// | `KeyManager.swift`            | Core definition, state, init, public API    |
-/// | `KeyManager+Rotation.swift`   | Key rotation lifecycle and migration API    |
-/// | `KeyManager+Derivation.swift` | ECDH derivation (Secure Enclave + fallback) |
-/// | `KeyManager+Salt.swift`       | HKDF salt generation and persistence        |
+/// Use ``currentKeyAndVersion()`` when a caller needs the key **and** its version:
+/// two separate `await`s could straddle a concurrent ``rotateKey()``.
 ///
 /// ## Security Design: No Raw Key Persistence
 ///
-/// The derived AES-256 key is **never written to the Keychain**. Only the
-/// non-extractable Secure Enclave key reference and the HKDF salt are
-/// persisted. Re-deriving costs ~2–5ms per cold start — negligible against
-/// SwiftData I/O. See ``symmetricKey()`` for the full rationale.
+/// Derived AES-256 keys are **never written to the Keychain**. Only the
+/// non-extractable Secure Enclave key reference, the per-version HKDF salts, and the
+/// current version counter are persisted. Re-deriving costs ~2–5ms per version.
 public actor KeyManager {
 
   // MARK: - Internal Logger
@@ -85,10 +83,15 @@ public actor KeyManager {
 
   // MARK: - Constants
 
-  /// Keychain service identifier for AuraKit's encryption salt.
+  /// Keychain service identifier for AuraKit's encryption material.
   static let keychainService = "com.aurakit.encryption"
 
-  /// Keychain account identifier for the HKDF salt.
+  /// Legacy (pre-versioning) Keychain account for the single HKDF salt.
+  ///
+  /// Installations created before versioned salts stored exactly one salt here,
+  /// which always belonged to the then-current key version. It is migrated to
+  /// ``saltKeychainAccount(forVersion:)`` on first access and deleted by
+  /// ``purgeRetiredKeyMaterial(olderThan:)``.
   static let saltKeychainAccount = "hkdf-salt"
 
   /// Keychain account identifier for the Secure Enclave key reference.
@@ -96,17 +99,15 @@ public actor KeyManager {
 
   /// Keychain account identifier for the persisted key version counter.
   ///
-  /// The key version is stored as a UTF-8 encoded integer string in the Keychain.
-  /// This ensures the version counter survives app restarts and crashes,
-  /// preventing `keyVersion` from resetting to `0` after relaunch — which
-  /// would break partial re-encryption migration logic that relies on
-  /// matching `RawMemoryNode.keyVersion` against the current version.
+  /// Stored as a UTF-8 encoded integer string so the version survives restarts —
+  /// records are decrypted with the key matching their stored version.
   static let keyVersionKeychainAccount = "key-version"
-
-
 
   /// HKDF shared info — domain separation for AuraKit v1 key derivation.
   static let hkdfSharedInfo = Data("AuraKit.v1".utf8)
+
+  /// HKDF shared info for static-key (test mode) rotation.
+  static let staticRotationSharedInfo = Data("AuraKit.v1.static-rotation".utf8)
 
   /// Symmetric key output size in bytes (256-bit AES).
   static let symmetricKeyByteCount = 32
@@ -114,200 +115,267 @@ public actor KeyManager {
   /// Salt size in bytes.
   static let saltByteCount = 32
 
+  /// Keychain account for the HKDF salt of a specific key version.
+  static func saltKeychainAccount(forVersion version: Int) -> String {
+    "hkdf-salt.v\(version)"
+  }
+
   // MARK: - State
 
-  /// Cached symmetric key. Derived once per actor lifetime (or until rotated).
-  /// Accessed by `KeyManager+Rotation.swift` for key rotation fail-safe logic.
+  /// Cached symmetric key for the **current** key version.
   var cachedKey: SymmetricKey?
 
-  /// The previous symmetric key, preserved after rotation for re-encryption migration.
-  /// Cleared by ``clearPreviousKey()`` or overwritten by the next ``rotateKey()`` call.
-  /// Accessed by `KeyManager+Rotation.swift`.
+  /// The previous symmetric key, preserved after rotation for convenience.
+  /// Cleared by ``clearPreviousKey()`` or overwritten by the next ``rotateKey()``.
   var _previousKey: SymmetricKey?
 
-  /// Monotonically increasing key version counter.
-  /// Incremented each time ``rotateKey()`` is called.
-  /// Persisted to Keychain to survive app restarts.
-  /// Accessed by `KeyManager+Rotation.swift`.
+  /// Current key version. Only meaningful once ``isVersionBootstrapped`` is `true`.
   var _keyVersion: Int = 0
+
+  /// Whether ``_keyVersion`` has been loaded from the Keychain.
+  ///
+  /// Bootstrapping is lazy and **throwing**: reading the Keychain while the device
+  /// is locked must surface an error instead of silently defaulting to version `0`
+  /// (which would mislabel new records and select the wrong key).
+  var isVersionBootstrapped: Bool = false
+
+  /// Cache of derived keys for **retired** (non-current) versions.
+  var retiredKeyCache: [Int: SymmetricKey] = [:]
+
+  /// Root key for static (test) mode. `nil` in production mode.
+  var staticRootKey: SymmetricKey?
+
+  /// In-memory per-version salts for static (test) mode rotation.
+  var staticSalts: [Int: Data] = [:]
+
+  /// `true` when this manager was created with ``init(staticKey:)``.
+  let isStaticMode: Bool
 
   // MARK: - Init
 
-  /// Creates a `KeyManager`. Key generation and derivation are deferred until
-  /// the first call to ``symmetricKey()``.
+  /// Creates a production `KeyManager`.
   ///
-  /// The ``keyVersion`` counter is bootstrapped from the Keychain on init.
-  /// If no persisted version exists (first launch), it defaults to `0`.
+  /// Key generation, derivation, and version bootstrapping are deferred until
+  /// first use, so constructing a manager never touches the Keychain (which may
+  /// be unavailable while the device is locked).
   public init() {
-    self._keyVersion = Self.bootstrapKeyVersion()
+    self.isStaticMode = false
   }
 
-  /// Creates a `KeyManager` with a pre-generated symmetric key.
+  /// Creates a hermetic `KeyManager` backed by a pre-generated symmetric key.
   ///
-  /// This initialiser bypasses Secure Enclave key generation and Keychain access
-  /// entirely. The provided key is cached immediately and returned by all subsequent
-  /// calls to ``symmetricKey()``.
+  /// Static mode never touches the Secure Enclave or the Keychain. Version `0`
+  /// uses `staticKey` directly; rotated versions are derived in memory via
+  /// HKDF from `staticKey` with random per-version salts.
   ///
   /// - Parameter staticKey: A pre-generated 256-bit symmetric key.
   ///
   /// - Warning: **For unit testing only.** Using a static key in production defeats
-  ///   the purpose of Secure Enclave–derived key management. This initialiser is
-  ///   intentionally public to support `@testable import AuraKit` in the test target.
+  ///   the purpose of Secure Enclave–derived key management.
   public init(staticKey: SymmetricKey) {
+    self.isStaticMode = true
     self.cachedKey = staticKey
+    self.staticRootKey = staticKey
+    self.isVersionBootstrapped = true
   }
 
   // MARK: - Public API
 
-  /// Returns the AES-256 symmetric key, deriving it if not cached.
-  ///
-  /// On first call (per process lifetime, or after
-  /// ``clearCachedKeyForBackground()``):
-  /// 1. Retrieves or generates a Secure Enclave P256 key pair
-  /// 2. Retrieves or generates a 32-byte HKDF salt from the Keychain
-  /// 3. Performs ECDH self-agreement → HKDF-SHA256 derivation
-  /// 4. Caches the result **in actor memory only**
-  ///
-  /// The derived key is **not** persisted to the Keychain. Only the
-  /// non-extractable Secure Enclave key reference and the random HKDF
-  /// salt are stored — neither is sufficient alone to reconstruct the
-  /// AES key without invoking Secure Enclave hardware. Re-derivation
-  /// costs ~2–5ms, paid at most once per cold start.
+  /// Returns the AES-256 symmetric key for the **current** key version.
   ///
   /// - Returns: A 256-bit ``SymmetricKey`` suitable for AES-GCM encryption.
-  /// - Throws: ``AuraError/secureEnclaveUnavailable(reason:)`` if key generation
-  ///   or derivation fails.
+  /// - Throws: ``AuraError/secureEnclaveUnavailable(reason:)`` or
+  ///   ``AuraError/keychainOperationFailed(operation:status:)`` if key material
+  ///   cannot be read or derived (e.g., device locked).
   public func symmetricKey() throws -> SymmetricKey {
+    try currentKeyAndVersion().key
+  }
+
+  /// Returns the current key **and** its version in a single actor hop.
+  ///
+  /// Always use this when sealing data: reading ``symmetricKey()`` and
+  /// ``keyVersion`` with two separate `await`s allows a concurrent
+  /// ``rotateKey()`` to run in between, producing ciphertext sealed with key
+  /// `N` but labelled `N+1` — permanently undecryptable.
+  public func currentKeyAndVersion() throws -> (key: SymmetricKey, version: Int) {
+    try ensureVersionBootstrapped()
+
     if let cached = cachedKey {
+      return (cached, _keyVersion)
+    }
+
+    let key = try deriveKey(forVersion: _keyVersion, createSaltIfMissing: true)
+    cachedKey = key
+    KeyManager.logger.info(
+      "[AuraKit] KeyManager: Symmetric key v\(self._keyVersion) derived (not persisted)."
+    )
+    return (key, _keyVersion)
+  }
+
+  /// Returns the symmetric key for an arbitrary key version.
+  ///
+  /// Used to decrypt records sealed before the most recent rotation(s).
+  ///
+  /// - Parameter version: The key version recorded on the ciphertext.
+  /// - Throws: ``AuraError/keyRotationFailed(reason:)`` if the key material for
+  ///   `version` was purged or never existed.
+  public func symmetricKey(forVersion version: Int) throws -> SymmetricKey {
+    try ensureVersionBootstrapped()
+
+    if version == _keyVersion {
+      return try currentKeyAndVersion().key
+    }
+    guard version >= 0, version < _keyVersion else {
+      throw AuraError.keyRotationFailed(
+        reason: "Key version \(version) does not exist (current version: \(_keyVersion))."
+      )
+    }
+    if let cached = retiredKeyCache[version] {
       return cached
     }
 
-    let key = try deriveKey()
-    cachedKey = key
-    KeyManager.logger.info(
-      "[AuraKit] KeyManager: Symmetric key derived from Secure Enclave (not persisted)."
-    )
+    let key = try deriveKey(forVersion: version, createSaltIfMissing: false)
+    retiredKeyCache[version] = key
     return key
   }
 
-  // MARK: - Key Version Bootstrap
-
-  /// Reads the persisted key version from the Keychain.
+  /// Resolves the keys for a set of versions in one actor hop.
   ///
-  /// Called during `init()` to restore the version counter across app restarts.
-  /// Returns `0` if no version has been persisted yet (first launch).
-  ///
-  /// - Note: This is a `static` method (not `nonisolated`) so it can be called
-  ///   from the actor's synchronous `init` without requiring an actor hop.
-  private static func bootstrapKeyVersion() -> Int {
-    guard let data = KeychainHelper.retrieve(
-      service: keychainService,
-      account: keyVersionKeychainAccount
-    ) else {
-      // No persisted version — this is expected on first launch.
-      logger.debug(
-        "[AuraKit] KeyManager: No persisted keyVersion found in Keychain (first launch). Defaulting to 0."
-      )
-      return 0
-    }
+  /// The current key is required (its failure throws); retired versions whose
+  /// material is unavailable are omitted so callers can count those records as
+  /// decryption failures instead of aborting the whole read.
+  func keyRing(for versions: Set<Int>) throws -> KeyRing {
+    let current = try currentKeyAndVersion()
+    var keys: [Int: SymmetricKey] = [current.version: current.key]
 
-    guard let string = String(data: data, encoding: .utf8),
-      let version = Int(string)
-    else {
-      // Data exists but is malformed — this is unexpected and may indicate
-      // Keychain corruption or a schema change between versions.
-      logger.warning(
-        """
-        [AuraKit] KeyManager: Persisted keyVersion data exists in Keychain but \
-        could not be parsed as UTF-8 integer. Defaulting to 0. \
-        This may indicate Keychain corruption — monitor for key version mismatches.
-        """
-      )
-      return 0
+    for version in versions where version != current.version {
+      do {
+        keys[version] = try symmetricKey(forVersion: version)
+      } catch {
+        KeyManager.logger.error(
+          "[AuraKit] KeyManager: Key material for v\(version) unavailable — \(error.localizedDescription)"
+        )
+      }
     }
-
-    logger.debug(
-      "[AuraKit] KeyManager: Bootstrapped keyVersion from Keychain: \(version)."
-    )
-    return version
+    return KeyRing(currentVersion: current.version, keys: keys)
   }
 
-  /// Persists the current key version to the Keychain.
+  // MARK: - Version Bootstrap
+
+  /// Loads the persisted key version from the Keychain exactly once.
   ///
-  /// Called after each successful ``rotateKey()`` to ensure the version
-  /// counter survives app restarts.
+  /// - Throws: ``AuraError/keychainOperationFailed(operation:status:)`` if the
+  ///   Keychain is unreadable (e.g., device locked). The manager stays
+  ///   un-bootstrapped and retries on the next call.
+  func ensureVersionBootstrapped() throws {
+    guard !isVersionBootstrapped else { return }
+
+    guard let data = try KeychainHelper.retrieveOrThrow(
+      service: KeyManager.keychainService,
+      account: KeyManager.keyVersionKeychainAccount
+    ) else {
+      KeyManager.logger.debug(
+        "[AuraKit] KeyManager: No persisted keyVersion found (first launch). Defaulting to 0."
+      )
+      _keyVersion = 0
+      isVersionBootstrapped = true
+      return
+    }
+
+    guard let string = String(data: data, encoding: .utf8), let version = Int(string), version >= 0 else {
+      // Refuse to guess: defaulting to 0 would select the wrong key for new writes.
+      KeyManager.logger.fault(
+        "[AuraKit] KeyManager: Persisted keyVersion is malformed — refusing to guess a key version."
+      )
+      throw AuraError.secureEnclaveUnavailable(
+        reason: "Persisted key version in Keychain is malformed; key material cannot be selected safely."
+      )
+    }
+
+    _keyVersion = version
+    isVersionBootstrapped = true
+    KeyManager.logger.debug("[AuraKit] KeyManager: Bootstrapped keyVersion from Keychain: \(version).")
+  }
+
+  /// Persists the given key version to the Keychain (production mode only).
   ///
   /// - Throws: ``AuraError/keyRotationFailed(reason:)`` if Keychain persistence fails.
-  func persistKeyVersion() throws {
-    let data = Data(String(_keyVersion).utf8)
+  func persistKeyVersion(_ version: Int) throws {
+    guard !isStaticMode else { return }
+
     do {
       try KeychainHelper.storeOrThrow(
-        data: data,
+        data: Data(String(version).utf8),
         service: KeyManager.keychainService,
         account: KeyManager.keyVersionKeychainAccount
       )
     } catch {
-      KeyManager.logger.fault(
-        "[AuraKit] KeyManager: Failed to persist keyVersion \(self._keyVersion) to Keychain."
-      )
+      KeyManager.logger.fault("[AuraKit] KeyManager: Failed to persist keyVersion \(version) to Keychain.")
       throw AuraError.keyRotationFailed(
-        reason: "Failed to persist keyVersion \(_keyVersion) to Keychain: \(error.localizedDescription)"
+        reason: "Failed to persist keyVersion \(version) to Keychain: \(error.localizedDescription)"
       )
     }
   }
 
-  /// Clears the cached symmetric key from memory.
+  // MARK: - Cache Management
+
+  /// Clears **all** cached key material from memory.
   ///
-  /// The next call to ``symmetricKey()`` will re-derive from the Secure Enclave.
-  /// Use this for key rotation or test teardown.
-  ///
-  /// - Note: This clears only the primary cached key. The ``previousKey``
-  ///   (preserved after rotation for migration) is **not** affected.
-  ///   Call ``clearPreviousKey()`` separately to clear both.
+  /// In production mode the next call re-derives from the Secure Enclave.
+  /// In static (test) mode the static root key is dropped as well, so subsequent
+  /// key requests throw — a cleared static key is never silently recovered.
   public func clearCachedKey() {
     cachedKey = nil
-    KeyManager.logger.info("[AuraKit] KeyManager: Cached key cleared.")
+    retiredKeyCache.removeAll()
+    if isStaticMode {
+      staticRootKey = nil
+      staticSalts.removeAll()
+    }
+    KeyManager.logger.info("[AuraKit] KeyManager: Cached key material cleared.")
   }
 
-  /// Clears the cached symmetric key to reduce in-memory key exposure
-  /// during background or inactive application states.
+  /// Clears cached symmetric keys to reduce in-memory key exposure while the
+  /// application is in the background.
   ///
-  /// This method is designed for **app lifecycle integration**. Call it when
-  /// the application transitions to the background to minimise the window
-  /// during which a derived symmetric key is held in process memory.
-  ///
-  /// The ``previousKey`` (used for key rotation migration) is intentionally
-  /// **not** cleared — rotation migrations may span multiple foreground/background
-  /// transitions and must not lose the old key mid-migration.
-  ///
-  /// The next foreground call to ``symmetricKey()`` will transparently
-  /// re-derive the key from the Secure Enclave with no user-visible impact.
-  ///
-  /// ## Usage
+  /// The ``previousKey`` is intentionally **not** cleared — migrations may span
+  /// several foreground/background transitions. The next foreground call to
+  /// ``symmetricKey()`` transparently re-derives the key (~2–5ms).
   ///
   /// ```swift
-  /// // In your App's scenePhase handler:
   /// .onChange(of: scenePhase) { _, newPhase in
   ///     if newPhase == .background {
-  ///         Task {
-  ///             await keyManager.clearCachedKeyForBackground()
-  ///         }
+  ///         Task { await keyManager.clearCachedKeyForBackground() }
   ///     }
   /// }
   /// ```
-  ///
-  /// ## Performance
-  ///
-  /// Re-derivation on return to foreground takes ~2–5ms (ECDH + HKDF).
-  /// This is imperceptible to users and occurs before any encrypt/decrypt
-  /// operation is needed.
   public func clearCachedKeyForBackground() {
+    // In static (test) mode the root key is intentionally retained — it cannot
+    // be re-derived from hardware — but all derived caches are dropped.
     cachedKey = nil
+    retiredKeyCache.removeAll()
     KeyManager.logger.info(
-      """
-      [AuraKit] KeyManager: Cached key cleared for background transition. \
-      Key will be re-derived on next foreground access.
-      """
+      "[AuraKit] KeyManager: Cached keys cleared for background transition; re-derived on next access."
     )
+  }
+}
+
+// MARK: - KeyRing
+
+/// An immutable, `Sendable` set of symmetric keys indexed by key version.
+///
+/// Resolved once per read operation via ``KeyManager/keyRing(for:)`` so that
+/// records sealed with different key versions can be decrypted in a single pass
+/// without repeated actor hops.
+struct KeyRing: Sendable {
+
+  /// The key version used for new writes at the time the ring was resolved.
+  let currentVersion: Int
+
+  /// Available keys by version.
+  let keys: [Int: SymmetricKey]
+
+  /// Returns the key for `version`, or `nil` if its material is unavailable.
+  func key(for version: Int) -> SymmetricKey? {
+    keys[version]
   }
 }

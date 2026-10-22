@@ -42,7 +42,7 @@ import os.log
 //                     gazeWeight: 0.3,        // Gaze: low-weight, queued in L1 Buffer
 //                     bufferCapacity: 512
 //                 )
-//                 AuraKit.shared.configure(with: config)
+//                 try? AuraKit.shared.configure(with: config)
 //             }
 //     }
 // }
@@ -52,10 +52,7 @@ import os.log
 //
 // ```swift
 // try await AuraKit.shared.capture().record(
-//     event: SpatialEvent(
-//         kind: .gaze(rawPosition: SIMD3(0.1, 0.9, -1.0)),
-//         score: 0  // Overwritten by HeuristicRouter at record time
-//     )
+//     event: .gaze(at: SIMD3(0.1, 0.9, -1.0)) // score is set by HeuristicRouter
 // )
 // ```
 //
@@ -227,10 +224,15 @@ public final class AuraKit {
   ///   - config: The validated ``AuraConfiguration`` to apply.
   ///   - store: An optional ``SpatialEventStore`` to use for persistence.
   ///     Pass `nil` to use the default in-memory store.
+  ///   - modelProvider: The on-device model used by
+  ///     ``MemoryManager`` / ``IntelligenceActor``. Destructive operations
+  ///     (compression, pruning) require a provider whose
+  ///     ``MLXModelProvider/isProductionInferenceBackend`` is `true`.
   /// - Throws: ``AuraError/alreadyConfigured`` if the pipeline is already active.
   public func configure(
     with config: AuraConfiguration,
-    store: (any SpatialEventStore)?
+    store: (any SpatialEventStore)?,
+    modelProvider: (any MLXModelProvider)? = nil
   ) throws {
     guard _capture == nil else {
       AuraKit.logger.fault(
@@ -241,7 +243,7 @@ public final class AuraKit {
       )
       throw AuraError.alreadyConfigured
     }
-    _capture = CaptureActor(config: config, store: store)
+    _capture = CaptureActor(config: config, store: store, modelProvider: modelProvider)
   }
 
   /// Convenience throwing overload — constructs an ``AuraConfiguration`` from
@@ -418,6 +420,13 @@ public final class AuraKit {
       return 0
     }
 
+    // Detach *before* suspending. `AuraKit` is @MainActor and the flush below
+    // suspends, so other main-actor work can interleave. Detaching first means
+    // (a) no new events are routed into a pipeline that is being torn down, and
+    // (b) a configure() that runs during the flush is never wiped out by a
+    // late `_capture = nil`.
+    _capture = nil
+
     let flushedCount = await capture.flushToStore()
 
     if flushedCount > 0 {
@@ -427,7 +436,6 @@ public final class AuraKit {
     }
 
     AuraKit.logger.info("[AuraKit] shutdown() — capture pipeline torn down gracefully.")
-    _capture = nil
     return flushedCount
   }
 
@@ -463,19 +471,27 @@ public final class AuraKit {
   /// Configures the pipeline with an optional custom store **only if** it has
   /// not been configured yet.
   ///
-  /// This is the idempotent counterpart to ``configure(with:store:)``.
+  /// This is the idempotent counterpart to ``configure(with:store:modelProvider:)``.
   /// If the pipeline is already active, this method returns silently.
   ///
   /// - Parameters:
   ///   - config: The validated ``AuraConfiguration`` to apply.
   ///   - store: An optional ``SpatialEventStore`` for persistence.
   ///     Pass `nil` to use the default in-memory store.
+  ///   - modelProvider: Optional on-device model provider (see
+  ///     ``configure(with:store:modelProvider:)``).
   public func configureIfNeeded(
     with config: AuraConfiguration,
-    store: (any SpatialEventStore)?
+    store: (any SpatialEventStore)?,
+    modelProvider: (any MLXModelProvider)? = nil
   ) {
-    guard _capture == nil else { return }
-    _capture = CaptureActor(config: config, store: store)
+    guard _capture == nil else {
+      AuraKit.logger.debug(
+        "[AuraKit] configureIfNeeded() — pipeline already configured; supplied configuration/store ignored."
+      )
+      return
+    }
+    _capture = CaptureActor(config: config, store: store, modelProvider: modelProvider)
   }
 }
 
