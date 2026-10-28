@@ -8,9 +8,9 @@ import Foundation
 import os.log
 
 #if canImport(UIKit)
-import UIKit
+  import UIKit
 #elseif canImport(AppKit)
-import AppKit
+  import AppKit
 #endif
 
 // MARK: - AuraKitLifecycleObserver
@@ -65,31 +65,31 @@ public final class AuraKitLifecycleObserver {
     isObserving = true
 
     #if canImport(UIKit)
-    NotificationCenter.default.addObserver(
-      self,
-      selector: #selector(handleBackgroundTransition),
-      name: UIApplication.didEnterBackgroundNotification,
-      object: nil
-    )
-    NotificationCenter.default.addObserver(
-      self,
-      selector: #selector(handleBackgroundTransition),
-      name: UIApplication.willTerminateNotification,
-      object: nil
-    )
+      NotificationCenter.default.addObserver(
+        self,
+        selector: #selector(handleBackgroundTransition),
+        name: UIApplication.didEnterBackgroundNotification,
+        object: nil
+      )
+      NotificationCenter.default.addObserver(
+        self,
+        selector: #selector(handleTermination),
+        name: UIApplication.willTerminateNotification,
+        object: nil
+      )
     #elseif canImport(AppKit)
-    NotificationCenter.default.addObserver(
-      self,
-      selector: #selector(handleBackgroundTransition),
-      name: NSApplication.didHideNotification,
-      object: nil
-    )
-    NotificationCenter.default.addObserver(
-      self,
-      selector: #selector(handleBackgroundTransition),
-      name: NSApplication.willTerminateNotification,
-      object: nil
-    )
+      NotificationCenter.default.addObserver(
+        self,
+        selector: #selector(handleBackgroundTransition),
+        name: NSApplication.didHideNotification,
+        object: nil
+      )
+      NotificationCenter.default.addObserver(
+        self,
+        selector: #selector(handleTermination),
+        name: NSApplication.willTerminateNotification,
+        object: nil
+      )
     #endif
 
     Self.logger.info("[AuraKit] Lifecycle observer active.")
@@ -103,56 +103,99 @@ public final class AuraKitLifecycleObserver {
     Self.logger.info("[AuraKit] Lifecycle observer stopped.")
   }
 
-  /// Maximum time the expiring-activity assertion waits for the flush.
-  private nonisolated static let flushTimeout: DispatchTimeInterval = .seconds(25)
+  /// Maximum time the background assertion waits for the flush.
+  nonisolated static let backgroundFlushTimeout: DispatchTimeInterval = .seconds(25)
+
+  /// Maximum time termination is delayed while the flush completes.
+  ///
+  /// iOS grants roughly five seconds to `willTerminate` handlers; staying well
+  /// below that avoids the watchdog killing the process mid-write.
+  nonisolated static let terminationFlushTimeout: DispatchTimeInterval = .seconds(3)
 
   @objc private func handleBackgroundTransition() {
+    beginBackgroundFlush(capture: AuraKit.shared.captureOrNil)
+  }
+
+  @objc private func handleTermination() {
     let done = DispatchSemaphore(value: 0)
+    startFlush(capture: AuraKit.shared.captureOrNil, signalling: done)
 
-    // Flush first, then wipe keys — the flush needs the key to encrypt.
-    let work = Task { @MainActor in
-      defer { done.signal() }
-      guard let capture = AuraKit.shared.captureOrNil else { return }
-      let flushed = await capture.flushToStore()
-      Self.logger.info(
-        "[AuraKit] Background transition: Flushed \(flushed) events to store."
-      )
+    // The process exits as soon as this handler returns, so a bounded
+    // synchronous wait is the only way to let the flush finish. This cannot
+    // deadlock: the flush runs on the cooperative pool, not the main actor.
+    Self.wait(for: done, timeout: Self.terminationFlushTimeout, context: "Termination")
+  }
 
-      await capture.clearSensitiveDataForBackground()
-      Self.logger.info("[AuraKit] Background transition: Cleared sensitive data.")
-    }
+  /// Starts the background flush under a process assertion and returns
+  /// immediately — the calling (main) thread is never blocked.
+  ///
+  /// - Parameter capture: The pipeline to flush, or `nil` if not configured.
+  /// - Returns: The flush task; await its `value` to observe completion.
+  @discardableResult
+  func beginBackgroundFlush(capture: CaptureActor?) -> Task<Void, Never> {
+    let reason = "AuraKit: flush encrypted writes and clear key material"
+    let done = DispatchSemaphore(value: 0)
+    let task = startFlush(capture: capture, signalling: done)
 
     // Without an assertion the process can be suspended mid-flush, losing the
-    // coalesced writes and leaving the key cached. `performExpiringActivity`
-    // works in apps *and* extensions (unlike `UIApplication.beginBackgroundTask`)
-    // and runs its block on a background queue, so waiting here never blocks
-    // the main actor or the Swift Concurrency cooperative pool.
+    // coalesced writes and leaving the key cached. The wait always happens on
+    // a background queue.
     #if os(iOS) || os(tvOS) || os(watchOS) || os(visionOS)
-    ProcessInfo.processInfo.performExpiringActivity(
-      withReason: "AuraKit: flush encrypted writes and clear key material"
-    ) { expired in
-      if expired {
-        work.cancel()
-        return
+      // `performExpiringActivity` works in apps *and* extensions (unlike
+      // `UIApplication.beginBackgroundTask`) and invokes its block on a
+      // background queue.
+      ProcessInfo.processInfo.performExpiringActivity(withReason: reason) { expired in
+        guard !expired else { return }
+        Self.wait(for: done, timeout: Self.backgroundFlushTimeout, context: "Background transition")
       }
-      if done.wait(timeout: .now() + Self.flushTimeout) == .timedOut {
-        Self.logger.error("[AuraKit] Background transition: flush did not finish before timeout.")
-      }
-    }
     #elseif os(macOS)
-    ProcessInfo.processInfo.performActivity(
-      options: .userInitiated,
-      reason: "AuraKit: flush encrypted writes and clear key material"
-    ) {
-      if done.wait(timeout: .now() + Self.flushTimeout) == .timedOut {
-        Self.logger.error("[AuraKit] Background transition: flush did not finish before timeout.")
+      // `performActivity(options:reason:using:)` runs its block *synchronously*
+      // on the calling thread. Invoking it from the main thread (as a previous
+      // version did) blocked the main actor that the flush needed — a 25 s hang
+      // on every hide. Run the synchronous assertion wait in a detached task.
+      Task.detached(priority: .userInitiated) {
+        ProcessInfo.processInfo.performActivity(options: .userInitiated, reason: reason) {
+          Self.wait(
+            for: done, timeout: Self.backgroundFlushTimeout, context: "Background transition")
+        }
       }
-    }
-    #else
-    if done.wait(timeout: .now() + Self.flushTimeout) == .timedOut {
-      Self.logger.error("[AuraKit] Background transition: flush did not finish before timeout.")
-    }
     #endif
+    return task
+  }
+
+  /// Starts the flush-then-wipe sequence **off the main actor** and signals
+  /// `done` when it finishes.
+  @discardableResult
+  private func startFlush(
+    capture: CaptureActor?,
+    signalling done: DispatchSemaphore
+  ) -> Task<Void, Never> {
+    Task.detached(priority: .userInitiated) {
+      if let capture {
+        await Self.flushAndSecure(capture)
+      }
+      done.signal()
+    }
+  }
+
+  /// Flushes buffered and coalesced writes, then clears cached key material.
+  ///
+  /// The order matters: the flush needs the key to encrypt.
+  nonisolated static func flushAndSecure(_ capture: CaptureActor) async {
+    let flushed = await capture.flushToStore()
+    logger.info("[AuraKit] Lifecycle: Flushed \(flushed) events to store.")
+    await capture.clearSensitiveDataForBackground()
+    logger.info("[AuraKit] Lifecycle: Cleared sensitive data.")
+  }
+
+  private nonisolated static func wait(
+    for semaphore: DispatchSemaphore,
+    timeout: DispatchTimeInterval,
+    context: StaticString
+  ) {
+    if semaphore.wait(timeout: .now() + timeout) == .timedOut {
+      logger.error("[AuraKit] \(context): flush did not finish before timeout.")
+    }
   }
 }
 
