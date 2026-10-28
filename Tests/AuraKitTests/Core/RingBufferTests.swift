@@ -41,7 +41,7 @@ struct RingBufferTests {
   @Test("Count reflects enqueued items accurately")
   func testCountAccuracy() {
     var buffer = RingBuffer<SpatialEvent>(capacity: 16)
-    #expect(buffer.count == 0)
+    #expect(buffer.isEmpty)
 
     buffer.enqueue(.gazeFixture())
     buffer.enqueue(.gazeFixture())
@@ -116,7 +116,6 @@ struct RingBufferTests {
     }
 
     // After 10k cycles, count must be 0 and the buffer must be in clean state.
-    #expect(buffer.count == 0)
     #expect(buffer.isEmpty)
   }
 

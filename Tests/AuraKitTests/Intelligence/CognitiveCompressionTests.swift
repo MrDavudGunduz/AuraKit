@@ -200,7 +200,7 @@ struct CognitiveCompressionTests {
     #expect(report.didCompress)
     #expect(report.nodesPruned == 1)
     #expect(report.archiveNodesCreated == 1)
-    #expect(await store.count == 0)
+    #expect(await store.isEmpty)
     #expect(await store.archiveNodeCount == 1)
   }
 
@@ -255,8 +255,11 @@ struct CognitiveCompressionTests {
       #expect(summaryEvent.detail == "Summary generated (\(secretSummary.count) characters).")
     }
   }
+}
 
-  // MARK: - Data-Loss Guards
+// MARK: - Data-Loss Guards
+
+extension CognitiveCompressionTests {
 
   @Test("compressIdleMemories refuses placeholder provider and leaves all data intact")
   func compressIdleMemoriesRejectsPlaceholderProvider() async throws {

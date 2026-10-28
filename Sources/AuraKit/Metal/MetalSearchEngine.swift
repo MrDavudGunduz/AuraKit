@@ -180,7 +180,11 @@ public actor MetalSearchEngine {
 
     if vectors.count > config.maxVectorCount {
       Self.logger.warning(
-        "[AuraKit] MetalSearchEngine: \(vectors.count) vectors exceed maxVectorCount \(self.config.maxVectorCount) — only the first \(self.config.maxVectorCount) are searched."
+        """
+        [AuraKit] MetalSearchEngine: \(vectors.count) vectors exceed \
+        maxVectorCount \(self.config.maxVectorCount) — only the first \
+        \(self.config.maxVectorCount) are searched.
+        """
       )
     }
     let vectorCount = min(vectors.count, config.maxVectorCount)
@@ -387,19 +391,12 @@ public actor MetalSearchEngine {
     ids: [UUID],
     topK: Int
   ) -> [VectorSearchResult] {
-    var results = [VectorSearchResult]()
-    results.reserveCapacity(similarities.count)
-
-    for i in 0..<similarities.count {
-      results.append(VectorSearchResult(id: ids[i], similarity: similarities[i]))
-    }
-
-    results.sort()
-
+    let results = zip(ids, similarities)
+      .map { VectorSearchResult(id: $0, similarity: $1) }
+      .sorted()
     Self.logger.info(
       "[AuraKit] MetalSearchEngine: Search completed — \(similarities.count) vectors, top-\(topK) returned."
     )
-
     return Array(results.prefix(topK))
   }
 }

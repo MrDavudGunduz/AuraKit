@@ -169,21 +169,11 @@ extension EncryptedMemoryStore {
     offset: Int,
     limit: Int
   ) async -> (events: [SpatialEvent], rowCount: Int)? {
-    let records: [EncryptedRecord]
-    do {
-      var descriptor = FetchDescriptor<RawMemoryNode>(
-        sortBy: [SortDescriptor(\.timestamp, order: .forward)]
-      )
-      descriptor.fetchLimit = limit
-      descriptor.fetchOffset = offset
-      records = try modelContext.fetch(descriptor).map(EncryptedRecord.init(node:))
-    } catch {
-      Self.logger.error(
-        "[AuraKit] EncryptedMemoryStore: Stream batch fetch failed at offset \(offset) — \(error.localizedDescription)"
-      )
+    guard let records = fetchStreamRecords(offset: offset, limit: limit),
+          !records.isEmpty
+    else {
       return nil
     }
-    guard !records.isEmpty else { return nil }
 
     let ring: KeyRing
     do {
@@ -198,10 +188,47 @@ extension EncryptedMemoryStore {
     let signpostID = SignpostLogger.beginDecrypt(count: records.count)
     defer { SignpostLogger.endDecrypt(signpostID) }
 
-    let maxConcurrent = Self.maxConcurrentDecryption
-    let service = encryptionService
-    let jsonDecoder = decoder
+    let (events, failures) = await Self.decryptBatchConcurrently(
+      records,
+      ring: ring,
+      service: encryptionService,
+      decoder: decoder
+    )
 
+    if failures > 0 {
+      for _ in 0..<failures {
+        incrementDecryptionFailure()
+      }
+      Self.logger.error(
+        "[AuraKit] EncryptedMemoryStore: \(failures) record(s) failed to decrypt in stream batch at offset \(offset) — skipped."
+      )
+    }
+
+    return (events, records.count)
+  }
+
+  private func fetchStreamRecords(offset: Int, limit: Int) -> [EncryptedRecord]? {
+    do {
+      var descriptor = FetchDescriptor<RawMemoryNode>(
+        sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+      )
+      descriptor.fetchLimit = limit
+      descriptor.fetchOffset = offset
+      return try modelContext.fetch(descriptor).map(EncryptedRecord.init(node:))
+    } catch {
+      Self.logger.error(
+        "[AuraKit] EncryptedMemoryStore: Stream batch fetch failed at offset \(offset) — \(error.localizedDescription)"
+      )
+      return nil
+    }
+  }
+
+  private nonisolated static func decryptBatchConcurrently(
+    _ records: [EncryptedRecord],
+    ring: KeyRing,
+    service: EncryptionService,
+    decoder: JSONDecoder
+  ) async -> (events: [SpatialEvent], failures: Int) {
     var slots = [SpatialEvent?](repeating: nil, count: records.count)
     var failures = 0
 
@@ -212,17 +239,15 @@ extension EncryptedMemoryStore {
         let index = nextIndex
         let record = records[index]
         group.addTask {
-          (index, try? Self.open(record, ring: ring, service: service, decoder: jsonDecoder))
+          (index, try? open(record, ring: ring, service: service, decoder: decoder))
         }
         nextIndex += 1
       }
 
-      // Seed the group with initial tasks up to the concurrency limit.
-      while nextIndex < records.count, nextIndex < maxConcurrent {
+      while nextIndex < records.count, nextIndex < maxConcurrentDecryption {
         enqueueNext()
       }
 
-      // As each task completes, collect its result and enqueue the next.
       for await (index, event) in group {
         if let event {
           slots[index] = event
@@ -235,16 +260,7 @@ extension EncryptedMemoryStore {
       }
     }
 
-    if failures > 0 {
-      for _ in 0..<failures {
-        incrementDecryptionFailure()
-      }
-      Self.logger.error(
-        "[AuraKit] EncryptedMemoryStore: \(failures) record(s) failed to decrypt in stream batch at offset \(offset) — skipped."
-      )
-    }
-
     // Slots preserve the original chronological order.
-    return (slots.compactMap { $0 }, records.count)
+    return (slots.compactMap { $0 }, failures)
   }
 }

@@ -155,6 +155,7 @@ public actor EncryptedMemoryStore: SpatialEventStore {
   ///     Use ``PersistenceController/makeContainer(cloudKitContainerIdentifier:)``
   ///     for production or ``PersistenceController/makeInMemoryContainer()`` for tests.
   ///   - keyManager: The ``KeyManager`` actor providing encryption keys.
+  ///     Defaults to ``KeyManager/shared``.
   ///   - encryptionService: The ``EncryptionService`` for AES-GCM operations.
   ///   - largeDatasetWarningThreshold: Node count at which ``allEvents()``
   ///     emits a runtime warning. Pass `0` to disable.
@@ -162,17 +163,19 @@ public actor EncryptedMemoryStore: SpatialEventStore {
   ///   - retryQueueCapacity: Maximum events held for retry. `0` disables retry.
   ///   - retryDrainInterval: Seconds between scheduled retry drains. `0` disables.
   ///   - capacity: Maximum raw nodes kept on disk; oldest are evicted first.
-  ///     Defaults to `0` (unbounded) for source compatibility — production apps
-  ///     should prefer ``init(container:configuration:keyManager:encryptionService:)``.
+  ///     Defaults to ``AuraConfiguration/defaultStoreCapacity`` — the same
+  ///     bound as the in-memory store. Pass `0` explicitly for an unbounded
+  ///     store. Prefer ``init(container:configuration:keyManager:encryptionService:)``
+  ///     so every tuning parameter comes from one validated configuration.
   public init(
     container: ModelContainer,
-    keyManager: KeyManager = KeyManager(),
+    keyManager: KeyManager = .shared,
     encryptionService: EncryptionService = EncryptionService(),
     largeDatasetWarningThreshold: Int = AuraConfiguration.defaultLargeDatasetWarningThreshold,
     saveThreshold: Int = AuraConfiguration.defaultSaveThreshold,
     retryQueueCapacity: Int = AuraConfiguration.defaultRetryQueueCapacity,
     retryDrainInterval: TimeInterval = AuraConfiguration.defaultRetryDrainInterval,
-    capacity: Int = 0
+    capacity: Int = AuraConfiguration.defaultStoreCapacity
   ) {
     self.modelContext = ModelContext(container)
     // Explicit save() calls control write timing — disable autosave
@@ -216,7 +219,7 @@ public actor EncryptedMemoryStore: SpatialEventStore {
   public init(
     container: ModelContainer,
     configuration: StorageConfiguration,
-    keyManager: KeyManager = KeyManager(),
+    keyManager: KeyManager = .shared,
     encryptionService: EncryptionService = EncryptionService()
   ) {
     self.init(

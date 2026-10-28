@@ -117,7 +117,11 @@ public actor CaptureActor {
     if let existing = _intelligenceActor {
       if modelProvider != nil {
         Self.logger.warning(
-          "[AuraKit] CaptureActor: intelligenceActor(modelProvider:) override ignored — the IntelligenceActor was already created. Inject the provider via CaptureActor.init or AuraKit.configure instead."
+          """
+          [AuraKit] CaptureActor: intelligenceActor(modelProvider:) override ignored — \
+          the IntelligenceActor was already created. Inject the provider via \
+          CaptureActor.init or AuraKit.configure instead.
+          """
         )
       }
       return existing

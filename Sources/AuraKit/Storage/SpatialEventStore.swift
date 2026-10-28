@@ -29,9 +29,9 @@ import Foundation
 ///
 /// ## Note on `clear()`
 ///
-/// `clear()` is a destructive, test-only operation and is intentionally **not**
-/// part of this protocol. It is implemented directly on conforming types and accessed
-/// in tests via `@testable import AuraKit`. Production code should never call `clear()`.
+/// `clear()` (erase everything) is intentionally **not** part of this protocol:
+/// it is a deliberate, user-initiated operation that callers must invoke on a
+/// concrete store, never something the pipeline can trigger generically.
 public protocol SpatialEventStore: Actor {
 
   /// Appends a high-signal event to the persistent event log.
@@ -109,7 +109,9 @@ public protocol SpatialEventStore: Actor {
 
   /// Removes events with the specified IDs from the store.
   ///
-  /// Used by ``IntelligenceActor`` during semantic pruning passes.
+  /// Used by ``IntelligenceActor`` during semantic pruning passes. This is a
+  /// **required** member — there is deliberately no default implementation.
+  ///
   /// - Parameter ids: The set of event UUIDs to remove.
   /// - Returns: The number of events actually removed.
   @discardableResult
@@ -151,11 +153,10 @@ extension SpatialEventStore {
   /// Default no-op implementation for stores that do not use write coalescing.
   public func flushPendingWrites() async {}
 
-  /// Default implementation for removeEvents — no-op by default unless overridden.
-  @discardableResult
-  public func removeEvents(withIDs ids: Set<UUID>) async -> Int {
-    0
-  }
+  // NOTE: `removeEvents(withIDs:)` intentionally has **no** default
+  // implementation. A silent `return 0` default made semantic pruning a no-op
+  // for any custom store without the author noticing. Every conforming store
+  // must decide how deletion works.
 
   /// Default implementation returns whether count is zero.
   public var isEmpty: Bool {

@@ -51,7 +51,7 @@ struct MemoryStoreBatchTests {
   func batchAppendEmpty() async {
     let store = MemoryStore(capacity: 64)
     await store.batchAppend([])
-    #expect(await store.count == 0)
+    #expect(await store.isEmpty)
   }
 
   @Test("batchAppend produces identical results to sequential append")

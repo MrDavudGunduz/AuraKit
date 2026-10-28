@@ -23,24 +23,21 @@ extension EncryptedMemoryStore {
   /// Number of raw nodes encrypted with a key version other than the current one.
   ///
   /// Metadata-only query — no decryption occurs.
-  public func staleNodeCount() async -> Int {
+  ///
+  /// - Throws: The underlying fetch error. A failed count must never be read
+  ///   as "no stale nodes": ``completeKeyRotationMigration()`` uses this value
+  ///   to decide whether retired keys may be crypto-shredded.
+  public func staleNodeCount() async throws -> Int {
     let currentVersion = await keyManager.keyVersion
-    return staleNodeCount(relativeTo: currentVersion)
+    return try staleNodeCount(relativeTo: currentVersion)
   }
 
   /// Number of raw nodes whose key version differs from `version`.
-  func staleNodeCount(relativeTo version: Int) -> Int {
+  func staleNodeCount(relativeTo version: Int) throws -> Int {
     let descriptor = FetchDescriptor<RawMemoryNode>(
       predicate: #Predicate<RawMemoryNode> { $0.keyVersion != version }
     )
-    do {
-      return try modelContext.fetchCount(descriptor)
-    } catch {
-      Self.logger.error(
-        "[AuraKit] EncryptedMemoryStore: staleNodeCount failed — \(error.localizedDescription)"
-      )
-      return 0
-    }
+    return try modelContext.fetchCount(descriptor)
   }
 
   /// Re-encrypts every raw node sealed with an older key version using the
@@ -72,99 +69,137 @@ extension EncryptedMemoryStore {
       try Task.checkCancellation()
 
       let currentVersion = await keyManager.keyVersion
-      let excluded = excludedIDs
-      var descriptor = FetchDescriptor<RawMemoryNode>(
-        predicate: #Predicate<RawMemoryNode> {
-          $0.keyVersion != currentVersion && !excluded.contains($0.id)
-        },
-        sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+      let records = try fetchStaleRecords(
+        notMatching: currentVersion,
+        excluding: excludedIDs,
+        limit: size
       )
-      descriptor.fetchLimit = size
-
-      let records: [EncryptedRecord]
-      do {
-        records = try modelContext.fetch(descriptor).map(EncryptedRecord.init(node:))
-      } catch {
-        throw AuraError.keyRotationFailed(
-          reason: "Failed to fetch stale nodes: \(error.localizedDescription)"
-        )
-      }
       guard !records.isEmpty else { break }
 
-      // Single suspension point per batch.
-      let ring: KeyRing
-      do {
-        ring = try await keyManager.keyRing(for: Set(records.map(\.keyVersion)))
-      } catch {
-        throw AuraError.keyRotationFailed(
-          reason: "Current key unavailable during migration: \(error.localizedDescription)"
-        )
-      }
+      let ring = try await resolveMigrationKeyRing(for: records)
       let targetVersion = ring.currentVersion
       guard let targetKey = ring.key(for: targetVersion) else {
         throw AuraError.keyRotationFailed(reason: "Current key missing from key ring.")
       }
 
-      // Decrypt + reseal off the model objects (pure, Sendable values).
-      var resealed: [UUID: (sourceVersion: Int, payload: Data)] = [:]
-      for record in records {
-        do {
-          let event = try Self.open(record, ring: ring, service: encryptionService, decoder: decoder)
-          let aad = Self.rawRecordAAD(
-            id: event.id,
-            keyVersion: targetVersion,
-            eventType: event.kind.eventType.rawValue
-          )
-          let payload = try encryptionService.encrypt(
-            try encoder.encode(event),
-            using: targetKey,
-            authenticating: aad
-          )
-          resealed[record.id] = (record.keyVersion, payload)
-        } catch {
-          excludedIDs.insert(record.id)
-          incrementDecryptionFailure()
-          Self.logger.error(
-            "[AuraKit] EncryptedMemoryStore: Cannot migrate node \(record.id) (v\(record.keyVersion)) — \(error.localizedDescription)"
-          )
-        }
-      }
+      let resealed = resealBatch(
+        records,
+        ring: ring,
+        targetKey: targetKey,
+        targetVersion: targetVersion,
+        excludedIDs: &excludedIDs
+      )
       guard !resealed.isEmpty else { continue }
 
-      // Re-fetch after the suspension and apply only to unchanged nodes.
-      let ids = Set(resealed.keys)
-      let nodes: [RawMemoryNode]
-      do {
-        nodes = try modelContext.fetch(FetchDescriptor<RawMemoryNode>(
-          predicate: #Predicate<RawMemoryNode> { ids.contains($0.id) }
-        ))
-      } catch {
-        throw AuraError.keyRotationFailed(
-          reason: "Failed to re-fetch nodes for migration: \(error.localizedDescription)"
-        )
-      }
-
-      var batchMigrated = 0
-      for node in nodes {
-        guard let entry = resealed[node.id], node.keyVersion == entry.sourceVersion else { continue }
-        node.encryptedPayload = entry.payload
-        node.keyVersion = targetVersion
-        batchMigrated += 1
-      }
-
-      guard commitPendingChanges(context: "Key migration batch") else {
-        throw AuraError.keyRotationFailed(reason: "Failed to save re-encrypted batch; context rolled back.")
-      }
-      migrated += batchMigrated
+      migrated += try applyResealedBatch(resealed, targetVersion: targetVersion)
     }
 
     if !excludedIDs.isEmpty {
       Self.logger.warning(
-        "[AuraKit] EncryptedMemoryStore: \(excludedIDs.count) node(s) could not be migrated and retain their old key version."
+        "[AuraKit] EncryptedMemoryStore: \(excludedIDs.count) node(s) could not be migrated."
       )
     }
-    Self.logger.info("[AuraKit] EncryptedMemoryStore: Re-encrypted \(migrated) node(s) to the current key.")
+    Self.logger.info(
+      "[AuraKit] EncryptedMemoryStore: Re-encrypted \(migrated) node(s) to the current key."
+    )
     return migrated
+  }
+
+  private func fetchStaleRecords(
+    notMatching currentVersion: Int,
+    excluding excluded: Set<UUID>,
+    limit: Int
+  ) throws -> [EncryptedRecord] {
+    var descriptor = FetchDescriptor<RawMemoryNode>(
+      predicate: #Predicate<RawMemoryNode> {
+        $0.keyVersion != currentVersion && !excluded.contains($0.id)
+      },
+      sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+    )
+    descriptor.fetchLimit = limit
+
+    do {
+      return try modelContext.fetch(descriptor).map(EncryptedRecord.init(node:))
+    } catch {
+      throw AuraError.keyRotationFailed(
+        reason: "Failed to fetch stale nodes: \(error.localizedDescription)"
+      )
+    }
+  }
+
+  private func resolveMigrationKeyRing(for records: [EncryptedRecord]) async throws -> KeyRing {
+    do {
+      return try await keyManager.keyRing(for: Set(records.map(\.keyVersion)))
+    } catch {
+      throw AuraError.keyRotationFailed(
+        reason: "Current key unavailable during migration: \(error.localizedDescription)"
+      )
+    }
+  }
+
+  private func resealBatch(
+    _ records: [EncryptedRecord],
+    ring: KeyRing,
+    targetKey: SymmetricKey,
+    targetVersion: Int,
+    excludedIDs: inout Set<UUID>
+  ) -> [UUID: (sourceVersion: Int, payload: Data)] {
+    var resealed: [UUID: (sourceVersion: Int, payload: Data)] = [:]
+    for record in records {
+      do {
+        let event = try Self.open(record, ring: ring, service: encryptionService, decoder: decoder)
+        let aad = Self.rawRecordAAD(
+          id: event.id,
+          keyVersion: targetVersion,
+          eventType: event.kind.eventType.rawValue
+        )
+        let payload = try encryptionService.encrypt(
+          try encoder.encode(event),
+          using: targetKey,
+          authenticating: aad
+        )
+        resealed[record.id] = (record.keyVersion, payload)
+      } catch {
+        excludedIDs.insert(record.id)
+        incrementDecryptionFailure()
+        Self.logger.error(
+          "[AuraKit] EncryptedMemoryStore: Cannot migrate node \(record.id) — \(error.localizedDescription)"
+        )
+      }
+    }
+    return resealed
+  }
+
+  private func applyResealedBatch(
+    _ resealed: [UUID: (sourceVersion: Int, payload: Data)],
+    targetVersion: Int
+  ) throws -> Int {
+    let ids = Set(resealed.keys)
+    let nodes: [RawMemoryNode]
+    do {
+      nodes = try modelContext.fetch(FetchDescriptor<RawMemoryNode>(
+        predicate: #Predicate<RawMemoryNode> { ids.contains($0.id) }
+      ))
+    } catch {
+      throw AuraError.keyRotationFailed(
+        reason: "Failed to re-fetch nodes for migration: \(error.localizedDescription)"
+      )
+    }
+
+    var batchMigrated = 0
+    for node in nodes {
+      guard let entry = resealed[node.id], node.keyVersion == entry.sourceVersion else { continue }
+      node.encryptedPayload = entry.payload
+      node.keyVersion = targetVersion
+      batchMigrated += 1
+    }
+
+    guard commitPendingChanges(context: "Key migration batch") else {
+      throw AuraError.keyRotationFailed(
+        reason: "Failed to save re-encrypted batch; context rolled back."
+      )
+    }
+    return batchMigrated
   }
 
   /// Re-encrypts every archive summary with the current key (AAD-bound).
@@ -264,7 +299,15 @@ extension EncryptedMemoryStore {
     let archiveResult = try await reencryptArchivesReportingFailures()
 
     let targetVersion = await keyManager.keyVersion
-    let remaining = staleNodeCount(relativeTo: targetVersion)
+    let remaining: Int
+    do {
+      remaining = try staleNodeCount(relativeTo: targetVersion)
+    } catch {
+      throw AuraError.keyRotationFailed(
+        reason: "Could not verify that no records reference retired keys (\(error.localizedDescription)); "
+          + "retired key material was retained."
+      )
+    }
     guard remaining == 0, archiveResult.failed == 0 else {
       throw AuraError.keyRotationFailed(
         reason: "\(remaining) node(s) and \(archiveResult.failed) archive(s) still reference retired keys; "

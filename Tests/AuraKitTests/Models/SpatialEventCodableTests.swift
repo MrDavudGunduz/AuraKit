@@ -91,18 +91,18 @@ struct SpatialEventKindCodableTests {
   @Test("All InteractionType cases survive encode/decode")
   func testAllInteractionTypes() throws {
     let types: [InteractionType] = [.touch, .move, .pinch, .drag]
-    for type_ in types {
+    for interactionType in types {
       let kind = SpatialEventKind.interaction(
-        type: type_,
+        type: interactionType,
         position: CodableSIMD3(SIMD3<Float>(0, 0, 0))
       )
       let data = try encoder.encode(kind)
       let decoded = try decoder.decode(SpatialEventKind.self, from: data)
       guard case .interaction(let decodedType, _) = decoded else {
-        Issue.record("Expected .interaction for \(type_)")
+        Issue.record("Expected .interaction for \(interactionType)")
         continue
       }
-      #expect(decodedType == type_)
+      #expect(decodedType == interactionType)
     }
   }
 }

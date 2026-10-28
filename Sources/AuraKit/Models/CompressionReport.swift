@@ -89,4 +89,16 @@ public struct CompressionReport: Sendable, Equatable {
     archiveNodeID: nil,
     duration: .zero
   )
+
+  /// A copy of this report with `duration` replaced.
+  func withDuration(_ duration: Duration) -> CompressionReport {
+    CompressionReport(
+      nodesPruned: nodesPruned,
+      archiveNodesCreated: archiveNodesCreated,
+      bytesRecovered: bytesRecovered,
+      summary: summary,
+      archiveNodeID: archiveNodeID,
+      duration: duration
+    )
+  }
 }

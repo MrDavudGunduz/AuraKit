@@ -153,11 +153,24 @@ public actor KeyManager {
 
   // MARK: - Init
 
+  /// The process-wide production key manager.
+  ///
+  /// All production `KeyManager` instances share the same Keychain items, but
+  /// each caches the current key version **in memory**. Two instances in one
+  /// process can therefore diverge: after `rotateKey()` + purge on one, the
+  /// other keeps sealing with a retired version whose material is gone after
+  /// the next launch. ``EncryptedMemoryStore`` uses this shared instance by
+  /// default; inject a separate manager only for tests (``init(staticKey:)``).
+  public static let shared = KeyManager()
+
   /// Creates a production `KeyManager`.
   ///
   /// Key generation, derivation, and version bootstrapping are deferred until
   /// first use, so constructing a manager never touches the Keychain (which may
   /// be unavailable while the device is locked).
+  ///
+  /// - Important: Prefer ``shared``. Multiple production instances in one
+  ///   process do not observe each other's key rotations.
   public init() {
     self.isStaticMode = false
   }
@@ -187,7 +200,10 @@ public actor KeyManager {
   /// - Throws: ``AuraError/secureEnclaveUnavailable(reason:)`` or
   ///   ``AuraError/keychainOperationFailed(operation:status:)`` if key material
   ///   cannot be read or derived (e.g., device locked).
-  public func symmetricKey() throws -> SymmetricKey {
+  ///
+  /// - Note: `internal` by design. Raw key material never crosses AuraKit's
+  ///   public API — host apps encrypt through ``EncryptedMemoryStore``.
+  func symmetricKey() throws -> SymmetricKey {
     try currentKeyAndVersion().key
   }
 
@@ -197,7 +213,7 @@ public actor KeyManager {
   /// ``keyVersion`` with two separate `await`s allows a concurrent
   /// ``rotateKey()`` to run in between, producing ciphertext sealed with key
   /// `N` but labelled `N+1` — permanently undecryptable.
-  public func currentKeyAndVersion() throws -> (key: SymmetricKey, version: Int) {
+  func currentKeyAndVersion() throws -> (key: SymmetricKey, version: Int) {
     try ensureVersionBootstrapped()
 
     if let cached = cachedKey {
@@ -219,7 +235,7 @@ public actor KeyManager {
   /// - Parameter version: The key version recorded on the ciphertext.
   /// - Throws: ``AuraError/keyRotationFailed(reason:)`` if the key material for
   ///   `version` was purged or never existed.
-  public func symmetricKey(forVersion version: Int) throws -> SymmetricKey {
+  func symmetricKey(forVersion version: Int) throws -> SymmetricKey {
     try ensureVersionBootstrapped()
 
     if version == _keyVersion {

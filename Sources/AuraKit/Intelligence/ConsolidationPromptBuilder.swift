@@ -44,10 +44,14 @@ public enum ConsolidationPromptBuilder {
   // MARK: - Internal Payload Types
 
   /// Compact representation of a memory node for the consolidation prompt.
+  ///
+  /// `position` is only present when the prompt is built from decrypted
+  /// events; `nil` fields are omitted from the JSON.
   struct NodePayload: Codable, Sendable {
     let type: String
     let score: Double
     let timestamp: Double
+    var position: [Float]?
   }
 
   /// The top-level consolidation request sent to the LLM.
@@ -77,6 +81,45 @@ public enum ConsolidationPromptBuilder {
       )
     }
 
+    return encode(payloads)
+  }
+
+  /// Builds a consolidation prompt from **decrypted** events.
+  ///
+  /// Unlike the snapshot-based `build(from:)`, which only sees plaintext
+  /// metadata, this includes each event's 3D position, so the summary can
+  /// describe *where* things happened. This is what cognitive compression
+  /// uses: the source records are deleted afterwards, so a metadata-only
+  /// summary would irreversibly discard the actual memory content.
+  ///
+  /// The prompt never leaves the device — it is consumed by the on-device
+  /// ``MLXModelProvider``.
+  ///
+  /// - Parameter events: The decrypted events to consolidate.
+  /// - Returns: A formatted JSON prompt string.
+  public static func build(from events: [SpatialEvent]) -> String {
+    let payloads = events.map { event in
+      let position: CodableSIMD3
+      switch event.kind {
+      case .gaze(let gazePosition): position = gazePosition
+      case .interaction(_, let interactionPosition): position = interactionPosition
+      }
+      return NodePayload(
+        type: event.kind.eventType.rawValue,
+        score: event.score,
+        timestamp: event.timestamp.timeIntervalSince1970,
+        position: [position.x, position.y, position.z]
+      )
+    }
+    return encode(payloads)
+  }
+
+  // MARK: - Encoding
+
+  private static let fallbackPrompt =
+    "{\"task\":\"consolidate\",\"instruction\":\"Summarize the key spatial events in one sentence.\",\"events\":[]}"
+
+  private static func encode(_ payloads: [NodePayload]) -> String {
     let consolidation = ConsolidationPayload(
       task: "consolidate",
       instruction: "Summarize the key spatial events in one sentence.",
@@ -88,13 +131,17 @@ public enum ConsolidationPromptBuilder {
     do {
       let data = try encoder.encode(consolidation)
       guard let jsonString = String(data: data, encoding: .utf8) else {
-        Self.logger.error("[AuraKit] ConsolidationPromptBuilder: Failed to decode UTF-8 string from encoded JSON data.")
-        return "{\"task\":\"consolidate\",\"instruction\":\"Summarize the key spatial events in one sentence.\",\"events\":[]}"
+        Self.logger.error(
+          "[AuraKit] ConsolidationPromptBuilder: Failed to decode UTF-8 string from encoded JSON data."
+        )
+        return fallbackPrompt
       }
       return jsonString
     } catch {
-      Self.logger.error("[AuraKit] ConsolidationPromptBuilder: Failed to encode consolidation JSON payload — \(error.localizedDescription)")
-      return "{\"task\":\"consolidate\",\"instruction\":\"Summarize the key spatial events in one sentence.\",\"events\":[]}"
+      Self.logger.error(
+        "[AuraKit] ConsolidationPromptBuilder: Failed to encode JSON — \(error.localizedDescription)"
+      )
+      return fallbackPrompt
     }
   }
 }

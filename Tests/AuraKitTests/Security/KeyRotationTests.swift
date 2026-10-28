@@ -40,7 +40,7 @@ struct KeyRotationTests {
     #expect(keysAreEqual(keyBefore, original))
 
     // Rotate — should return the original key
-    let previousKey = try await manager.rotateKey()
+    let previousKey = try await manager.rotateKeyReturningPrevious()
     #expect(previousKey != nil)
     #expect(keysAreEqual(previousKey!, original))
   }
@@ -158,7 +158,7 @@ struct KeyRotationTests {
     // Fire multiple concurrent rotations — actor serialises them
     try await withThrowingTaskGroup(of: SymmetricKey?.self) { group in
       for _ in 0..<5 {
-        group.addTask { try await manager.rotateKey() }
+        group.addTask { try await manager.rotateKeyReturningPrevious() }
       }
       for try await _ in group {
         // All rotations should complete without crash or data race

@@ -87,6 +87,35 @@ extension EncryptedMemoryStore {
     }
   }
 
+  /// Decrypts the given nodes for consolidation, oldest first.
+  ///
+  /// Each payload is authenticated and its plaintext metadata (`timestamp`,
+  /// `score`, `eventType`, `id`) is verified against the decrypted event.
+  /// Nodes that fail — tampered metadata, corruption, purged key material —
+  /// are **omitted**, so compression never deletes a record whose selection
+  /// was based on metadata it cannot vouch for.
+  ///
+  /// - Parameter ids: Candidate node IDs (typically from
+  ///   ``fetchNodesBelowSurvivalIndex(threshold:decayConstant:recallMultiplier:referenceDate:)``).
+  /// - Returns: Verified, decrypted events. Empty if the key is unavailable.
+  public func eventsForConsolidation(ids: Set<UUID>) async -> [SpatialEvent] {
+    guard !ids.isEmpty else { return [] }
+    do {
+      let targetIDs = ids
+      let descriptor = FetchDescriptor<RawMemoryNode>(
+        predicate: #Predicate<RawMemoryNode> { targetIDs.contains($0.id) },
+        sortBy: [SortDescriptor(\.timestamp, order: .forward)]
+      )
+      let records = try modelContext.fetch(descriptor).map(EncryptedRecord.init(node:))
+      return await decryptRecords(records)
+    } catch {
+      Self.logger.error(
+        "[AuraKit] EncryptedMemoryStore: eventsForConsolidation fetch failed — \(error.localizedDescription)"
+      )
+      return []
+    }
+  }
+
   /// Calculates the total `encryptedPayload` byte size for nodes matching
   /// the given UUIDs.
   ///

@@ -113,7 +113,9 @@ identifier_name:
     - _retryQueue
     - _cachedSourceNodeIDs
     - _dropContinuation
+    - _compressionContinuation
     - _metalSearchEngine
+    - _evictedEventCount
 
 # ─── Custom Rules ──────────────────────────────────────────────────────────────
 custom_rules:

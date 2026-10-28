@@ -86,6 +86,6 @@ struct IntelligenceActorTests {
     let (_, prunedCount) = try await intelligenceActor.processAndPrune([oldEvent])
 
     #expect(prunedCount == 1)
-    #expect(await store.count == 0)
+    #expect(await store.isEmpty)
   }
 }

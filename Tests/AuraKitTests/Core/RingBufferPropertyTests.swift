@@ -49,8 +49,7 @@ struct RingBufferPropertyTests {
         buffer.enqueue(Self.event(index: idx))
 
         // Invariant: count must always be in [0, capacity]
-        #expect(buffer.count >= 0, "Count must be non-negative")
-        #expect(buffer.count <= capacity, "Count must not exceed capacity")
+        #expect((0...capacity).contains(buffer.count), "Count must be in [0, capacity]")
       }
 
       // Final count: min(eventCount, capacity)
@@ -75,7 +74,6 @@ struct RingBufferPropertyTests {
       let drained = buffer.drainAll()
 
       // Post-drain invariants
-      #expect(buffer.count == 0, "Count must be 0 after drainAll()")
       #expect(buffer.isEmpty, "isEmpty must be true after drainAll()")
 
       // Drained element count must equal pre-drain count
@@ -164,7 +162,6 @@ struct RingBufferPropertyTests {
 
       // Draining an empty buffer should return empty array
       #expect(buffer.isEmpty)
-      #expect(buffer.count == 0)
       let drained = buffer.drainAll()
       #expect(drained.isEmpty)
 

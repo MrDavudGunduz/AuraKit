@@ -128,9 +128,13 @@ extension EncryptedMemoryStore {
   /// Fetches the raw ciphertext for a specific node, for SQLite inspection
   /// and ciphertext verification during testing.
   ///
+  /// `internal` by design: exposing ciphertext and its row binding to host
+  /// apps has no production use and widens the attack surface. Tests reach it
+  /// via `@testable import`.
+  ///
   /// - Parameter id: The UUID of the target node.
   /// - Returns: The encrypted payload `Data`, or `nil` if not found.
-  public func rawCiphertext(for id: UUID) async -> Data? {
+  func rawCiphertext(for id: UUID) async -> Data? {
     do {
       var descriptor = FetchDescriptor<RawMemoryNode>(
         predicate: #Predicate<RawMemoryNode> { $0.id == id }
@@ -236,16 +240,6 @@ extension EncryptedMemoryStore {
 
 /// An immutable, `Sendable` diagnostic snapshot of ``EncryptedMemoryStore`` state
 /// captured at a single point in time.
-///
-/// Combines node counts, write/read metrics, and dataset size classification
-/// into a single value suitable for production telemetry dashboards.
-///
-/// ```swift
-/// let health = await store.storeHealth
-/// if health.isLargeDataset {
-///     logger.warning("Store has \(health.totalNodeCount) nodes — consider pruning.")
-/// }
-/// ```
 public struct StoreHealth: Sendable, Equatable {
 
   /// Total number of encrypted nodes in the store.
@@ -273,34 +267,16 @@ extension EncryptedMemoryStore {
 
   /// Captures a comprehensive diagnostic snapshot of the store's current state.
   ///
-  /// This property aggregates node counts, event-type breakdowns, and
-  /// write/read metrics into a single ``StoreHealth`` value. All queries
-  /// operate on unencrypted metadata — **no decryption occurs**.
-  ///
-  /// Designed for production telemetry:
-  ///
-  /// ```swift
-  /// let health = await store.storeHealth
-  /// analytics.track("aurakit.health", properties: [
-  ///     "total_nodes": health.totalNodeCount,
-  ///     "gaze_nodes": health.gazeNodeCount,
-  ///     "interaction_nodes": health.interactionNodeCount,
-  ///     "write_success_rate": health.metrics.writeSuccessRate,
-  ///     "is_large": health.isLargeDataset,
-  /// ])
-  /// ```
+  /// All queries operate on unencrypted metadata — **no decryption occurs**.
   public var storeHealth: StoreHealth {
     get async {
       let total = await count
       let gazeCount = await fetchNodeCount(eventType: .gaze)
 
-      // Interaction count = total - gaze (avoids 4 separate queries)
-      let interactionCount = total - gazeCount
-
       return StoreHealth(
         totalNodeCount: total,
         gazeNodeCount: gazeCount,
-        interactionNodeCount: interactionCount,
+        interactionNodeCount: total - gazeCount,
         metrics: metrics,
         isLargeDataset: largeDatasetWarningThreshold > 0
           && total > largeDatasetWarningThreshold,
@@ -405,8 +381,11 @@ extension EncryptedMemoryStore {
   ///
   /// Any pending coalesced inserts are discarded (not flushed) before deletion.
   ///
+  /// Use this for **user-initiated data erasure** ("delete my data") and test
+  /// teardown. To also crypto-shred retired key material, follow up with
+  /// ``KeyManager/purgeRetiredKeyMaterial(olderThan:)``.
+  ///
   /// - Warning: This is a destructive, irreversible operation.
-  ///   Primarily intended for test teardown and development resets.
   public func clear() async {
     // Discard any pending coalesced inserts — they would be deleted anyway.
     pendingInsertCount = 0

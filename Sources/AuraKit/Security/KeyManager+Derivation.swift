@@ -107,6 +107,16 @@ extension KeyManager {
   /// - Throws: ``AuraError/secureEnclaveUnavailable(reason:)`` if key generation,
   ///   Keychain persistence, or ECDH agreement fails.
   private func deriveKeyUsingSecureEnclave(salt: Data) throws -> SymmetricKey {
+    // Intel Macs without a T2 chip (and some virtualised environments) have no
+    // Secure Enclave. Fail with an actionable error instead of an opaque
+    // CryptoKit failure from key generation.
+    guard SecureEnclave.isAvailable else {
+      throw AuraError.secureEnclaveUnavailable(
+        reason: "This device has no Secure Enclave (e.g. an Intel Mac without a T2 chip). "
+          + "AuraKit's production key management requires hardware-backed keys."
+      )
+    }
+
     do {
       let privateKey: SecureEnclave.P256.KeyAgreement.PrivateKey
 

@@ -53,12 +53,9 @@ public struct PersistenceController: Sendable {
 
   /// The complete SwiftData schema for AuraKit's memory hierarchy.
   ///
-  /// Contains all `@Model` types that form the encrypted vector store.
-  /// This schema is versioned — migration support will be added in Phase 5.
-  public static let schema = Schema([
-    RawMemoryNode.self,
-    MemoryArchiveNode.self,
-  ])
+  /// Always the **current** versioned schema (``AuraKitSchemaV3``); older
+  /// stores are upgraded through ``AuraKitMigrationPlan`` when opened.
+  public static let schema = Schema(versionedSchema: AuraKitSchemaV3.self)
 
   // MARK: - Container Factory
 
@@ -103,7 +100,9 @@ public struct PersistenceController: Sendable {
       schema: schema,
       isStoredInMemoryOnly: false,
       allowsSave: true,
-      groupContainer: .automatic,
+      // Never `.automatic`: that silently relocates the store into a shared
+      // App Group container whenever the host app has the entitlement.
+      groupContainer: .none,
       cloudKitDatabase: .none
     )
 

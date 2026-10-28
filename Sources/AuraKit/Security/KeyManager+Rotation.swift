@@ -37,12 +37,20 @@ extension KeyManager {
   /// try await store.completeKeyRotationMigration()
   /// ```
   ///
-  /// - Returns: The **previous** symmetric key (before rotation), or `nil` if it
-  ///   could not be resolved.
   /// - Throws: ``AuraError/keyRotationFailed(reason:)`` if salt generation, key
   ///   derivation, or version persistence fails. State is unchanged on failure.
+  public func rotateKey() throws {
+    try rotateKeyReturningPrevious()
+  }
+
+  /// Internal variant of ``rotateKey()`` that returns the previous key.
+  ///
+  /// Raw key material never crosses AuraKit's public API.
+  ///
+  /// - Returns: The **previous** symmetric key (before rotation), or `nil` if it
+  ///   could not be resolved.
   @discardableResult
-  public func rotateKey() throws -> SymmetricKey? {
+  func rotateKeyReturningPrevious() throws -> SymmetricKey? {
     try ensureVersionBootstrapped()
 
     let oldVersion = _keyVersion
@@ -142,7 +150,9 @@ extension KeyManager {
   /// Returns `nil` if no rotation has occurred in this process or if
   /// ``clearPreviousKey()`` has been called. Records sealed with older versions
   /// remain decryptable through ``symmetricKey(forVersion:)`` regardless.
-  public var previousKey: SymmetricKey? { _previousKey }
+  ///
+  /// `internal` by design — raw key material never crosses the public API.
+  var previousKey: SymmetricKey? { _previousKey }
 
   /// Clears the preserved previous key from memory.
   ///

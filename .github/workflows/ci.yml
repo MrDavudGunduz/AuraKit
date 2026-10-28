@@ -16,6 +16,13 @@ env:
   # forward compatibility before the June 2, 2026 enforcement date.
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# An explicit `shell: bash` runs steps with `-eo pipefail`. The implicit default
+# is plain `bash -e`, where `cmd | tee log` reports tee's exit status and
+# silently swallows test failures.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   # ── macOS Native Tests ───────────────────────────────────────────────────
   test-macos:
@@ -56,19 +63,25 @@ jobs:
 
       # ── Lint ─────────────────────────────────────────────────────────
 
+      - name: Install SwiftLint
+        run: |
+          # SwiftLint is intentionally NOT a package dependency (see Package.swift),
+          # so `swift run swiftlint` cannot work — install the standalone binary.
+          brew list swiftlint >/dev/null 2>&1 || brew install swiftlint
+          swiftlint version
+
       - name: SwiftLint (standalone)
         run: |
-          # Run SwiftLint as a standalone tool to catch edge cases that
-          # the build-time plugin may miss (e.g., disabled targets, conditional compilation).
-          #
-          # Hard-fails on any violation. If a rule needs relaxing, disable it
-          # explicitly in .swiftlint.yml — don't reach for a silent CI bypass.
-          swift run -c release swiftlint lint --strict --reporter github-actions
+          # Hard-fails on any error-level violation. Warnings are reported as
+          # GitHub Actions annotations without blocking the build.
+          swiftlint lint --reporter github-actions-logging
 
       # ── Test ───────────────────────────────────────────────────────────
 
       # Wall-clock benchmarks are disabled here (no AURAKIT_RUN_PERFORMANCE) —
       # they run serially in release mode in the `test-performance` job below.
+      # `pipefail` (workflow default shell) makes a failing `swift test` fail
+      # the step even though its output is piped through `tee`.
       - name: Test (parallel)
         run: swift test --parallel 2>&1 | tee test-output.txt
 

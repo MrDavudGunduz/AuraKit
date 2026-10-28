@@ -81,7 +81,7 @@ struct SurvivalIndexTests {
   }
 
   @Test("SpatialEvent extension calculates correct SI from referenceDate")
-  func spatialEventConvenience() {
+  func spatialEventConvenience() throws {
     let timestamp = Date().addingTimeInterval(-100)
     let event = SpatialEvent(
       id: UUID(),
@@ -90,7 +90,7 @@ struct SurvivalIndexTests {
       score: 1.0
     )
 
-    let config = try! AuraConfiguration(decayConstant: 0.001, recallMultiplier: 1.2)
+    let config = try AuraConfiguration(decayConstant: 0.001, recallMultiplier: 1.2)
     let score = SurvivalIndex.calculate(for: event, recallCount: 1, referenceDate: Date(), config: config)
 
     // e^(-0.1) * 1.2 ≈ 0.904837 * 1.2 ≈ 1.0858 -> clamped / math result

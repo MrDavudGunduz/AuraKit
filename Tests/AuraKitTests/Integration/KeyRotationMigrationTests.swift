@@ -50,7 +50,7 @@ struct KeyRotationMigrationTests {
     #expect(preRotationEvents.count == 2)
 
     // Rotate the key
-    let oldKey = try await keyManager.rotateKey()
+    let oldKey = try await keyManager.rotateKeyReturningPrevious()
     #expect(oldKey != nil)
 
     // Events encrypted with old key are decryptable through the versioned KeyRing

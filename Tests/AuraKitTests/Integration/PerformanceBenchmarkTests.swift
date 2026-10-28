@@ -134,7 +134,7 @@ struct EncryptionPerformanceTests {
     let ciphertext = try service.encrypt(plaintext, using: key)
     let elapsed = ContinuousClock.now - start
 
-    #expect(ciphertext.count > 0)
+    #expect(!ciphertext.isEmpty)
     #expect(
       elapsed < .milliseconds(1),
       "Single encrypt took \(elapsed) — expected < 1ms"

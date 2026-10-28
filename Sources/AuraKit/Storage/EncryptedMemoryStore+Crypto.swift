@@ -10,6 +10,11 @@
 // Records written by earlier AuraKit versions (no AAD) are still readable via
 // a legacy fallback; their decoded identity is then verified against the
 // row metadata so a swapped legacy payload is rejected as well.
+//
+// The plaintext query metadata (`timestamp`, `score`) is not part of the AAD,
+// but the authenticated payload contains the original values. Every open
+// cross-checks them, so a tampered metadata column is detected on read and —
+// crucially — before cognitive compression deletes anything based on it.
 
 import CryptoKit
 import Foundation
@@ -37,11 +42,19 @@ struct EncryptedRecord: Sendable {
   /// Raw ``SpatialEventType`` value stored in plaintext metadata.
   let eventType: String
 
+  /// Plaintext timestamp metadata (must match the authenticated payload).
+  let timestamp: Date
+
+  /// Plaintext heuristic score metadata (must match the authenticated payload).
+  let score: Double
+
   init(node: RawMemoryNode) {
     self.id = node.id
     self.payload = node.encryptedPayload
     self.keyVersion = node.keyVersion
     self.eventType = node.eventType
+    self.timestamp = node.timestamp
+    self.score = node.score
   }
 }
 
@@ -90,7 +103,8 @@ extension EncryptedMemoryStore {
   /// Opens a single record with the matching key from `ring`.
   ///
   /// Tries the AAD-bound format first, then the legacy (pre-AAD) format. In both
-  /// cases the decoded event identity must match the row metadata.
+  /// cases the decoded event identity **and** the plaintext query metadata
+  /// (`timestamp`, `score`) must match the authenticated payload.
   ///
   /// `nonisolated` and pure so it can run inside task-group children.
   nonisolated static func open(
@@ -118,6 +132,11 @@ extension EncryptedMemoryStore {
     guard event.id == record.id, event.kind.eventType.rawValue == record.eventType else {
       throw AuraError.decryptionFailed(
         reason: "Decrypted payload does not belong to record \(record.id) (possible row swap)."
+      )
+    }
+    guard event.timestamp == record.timestamp, event.score == record.score else {
+      throw AuraError.decryptionFailed(
+        reason: "Plaintext metadata of record \(record.id) does not match its authenticated payload (possible tampering)."
       )
     }
     return event
