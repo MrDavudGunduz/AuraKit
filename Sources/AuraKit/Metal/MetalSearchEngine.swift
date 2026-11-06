@@ -6,11 +6,12 @@
 // compute similarities in parallel on the GPU, achieving sub-millisecond
 // search latency for thousands of vectors on Apple Silicon.
 
-#if canImport(Metal)
-import Metal
-#endif
 import Foundation
 import os.log
+
+#if canImport(Metal)
+  import Metal
+#endif
 
 // MARK: - MetalSearchEngine
 
@@ -56,7 +57,7 @@ public actor MetalSearchEngine {
 
   // MARK: - Logger
 
-  private static let logger = Logger(
+  static let logger = Logger(
     subsystem: AuraKitConstants.subsystem,
     category: "MetalSearchEngine"
   )
@@ -64,18 +65,18 @@ public actor MetalSearchEngine {
   // MARK: - Metal Pipeline State
 
   #if canImport(Metal)
-  /// The GPU device used for compute operations.
-  private let device: MTLDevice
+    /// The GPU device used for compute operations.
+    let device: MTLDevice
 
-  /// The command queue for submitting compute work.
-  private let commandQueue: MTLCommandQueue
+    /// The command queue for submitting compute work.
+    let commandQueue: MTLCommandQueue
 
-  /// The compiled compute pipeline for the cosine similarity kernel.
-  private let pipelineState: MTLComputePipelineState
+    /// The compiled compute pipeline for the cosine similarity kernel.
+    let pipelineState: MTLComputePipelineState
   #endif
 
   /// Configuration controlling vector dimensions and dispatch parameters.
-  private let config: MetalSearchConfiguration
+  let config: MetalSearchConfiguration
 
   // MARK: - Init
 
@@ -90,49 +91,45 @@ public actor MetalSearchEngine {
     self.config = config
 
     #if canImport(Metal)
-    guard let device = MTLCreateSystemDefaultDevice() else {
-      throw AuraError.metalUnavailable(
-        reason: "No Metal-compatible GPU found on this device."
-      )
-    }
-    self.device = device
+      guard let device = MTLCreateSystemDefaultDevice() else {
+        throw AuraError.metalUnavailable(
+          reason: "No Metal-compatible GPU found on this device."
+        )
+      }
+      self.device = device
 
-    guard let queue = device.makeCommandQueue() else {
-      throw AuraError.metalUnavailable(
-        reason: "Failed to create Metal command queue."
-      )
-    }
-    self.commandQueue = queue
+      guard let queue = device.makeCommandQueue() else {
+        throw AuraError.metalUnavailable(
+          reason: "Failed to create Metal command queue."
+        )
+      }
+      self.commandQueue = queue
 
-    // Load the Metal shader library from the SPM bundle
-    guard let library = try? device.makeDefaultLibrary(bundle: Bundle.module) else {
-      throw AuraError.metalUnavailable(
-        reason: "Failed to load Metal shader library from Bundle.module. "
-          + "Ensure cosine_similarity.metal is included in the SPM target resources."
-      )
-    }
+      // Load the Metal shader library from the SPM bundle (precompiled .metallib
+      // in Xcode builds, or runtime-compiled .metal resource in SwiftPM CLI builds).
+      let library = try Self.makeShaderLibrary(device: device)
 
-    guard let function = library.makeFunction(name: "cosine_similarity_kernel") else {
-      throw AuraError.metalUnavailable(
-        reason: "Metal function 'cosine_similarity_kernel' not found in shader library."
-      )
-    }
+      guard let function = library.makeFunction(name: "cosine_similarity_kernel") else {
+        throw AuraError.metalUnavailable(
+          reason: "Metal function 'cosine_similarity_kernel' not found in shader library."
+        )
+      }
 
-    do {
-      self.pipelineState = try device.makeComputePipelineState(function: function)
-    } catch {
-      throw AuraError.metalUnavailable(
-        reason: "Failed to create compute pipeline state: \(error.localizedDescription)"
-      )
-    }
+      do {
+        self.pipelineState = try device.makeComputePipelineState(function: function)
+      } catch {
+        throw AuraError.metalUnavailable(
+          reason: "Failed to create compute pipeline state: \(error.localizedDescription)"
+        )
+      }
 
-    Self.logger.info(
-      "[AuraKit] MetalSearchEngine: Initialized — device='\(device.name)', dim=\(config.vectorDimension), maxVec=\(config.maxVectorCount)"
-    )
+      Self.logger.info(
+        "[AuraKit] MetalSearchEngine: Initialized — device='\(device.name)', dim=\(config.vectorDimension), maxVec=\(config.maxVectorCount)"
+      )
     #else
-    throw AuraError.metalUnavailable(
-      reason: "Metal framework is not available on this platform."
-    )
+      throw AuraError.metalUnavailable(
+        reason: "Metal framework is not available on this platform."
+      )
     #endif
   }
 
@@ -169,37 +166,28 @@ public actor MetalSearchEngine {
     topK: Int = 10
   ) async throws -> [VectorSearchResult] {
     #if canImport(Metal)
-    let signpostID = SignpostLogger.beginMetalSearch(vectorCount: vectors.count)
-    defer { SignpostLogger.endMetalSearch(signpostID) }
+      let signpostID = SignpostLogger.beginMetalSearch(vectorCount: vectors.count)
+      defer { SignpostLogger.endMetalSearch(signpostID) }
 
-    guard topK >= 0 else {
-      throw AuraError.vectorSearchFailed(reason: "topK must be >= 0 (got \(topK)).")
-    }
-    try validateSearchInputs(query: query, vectors: vectors, ids: ids)
-    guard !vectors.isEmpty, topK > 0 else { return [] }
+      guard topK >= 0 else {
+        throw AuraError.vectorSearchFailed(reason: "topK must be >= 0 (got \(topK)).")
+      }
+      try validateSearchInputs(query: query, vectors: vectors, ids: ids)
+      guard !vectors.isEmpty, topK > 0 else { return [] }
 
-    if vectors.count > config.maxVectorCount {
-      Self.logger.warning(
-        """
-        [AuraKit] MetalSearchEngine: \(vectors.count) vectors exceed \
-        maxVectorCount \(self.config.maxVectorCount) — only the first \
-        \(self.config.maxVectorCount) are searched.
-        """
+      let vectorCount = clampVectorCount(vectors.count)
+      let flatVectors = try flattenVectors(vectors, count: vectorCount)
+      let rawSimilarities = try await dispatchComputeKernel(
+        query: query,
+        flatVectors: flatVectors,
+        vectorCount: vectorCount
       )
-    }
-    let vectorCount = min(vectors.count, config.maxVectorCount)
-    let flatVectors = try flattenVectors(vectors, count: vectorCount)
-    let rawSimilarities = try await dispatchComputeKernel(
-      query: query,
-      flatVectors: flatVectors,
-      vectorCount: vectorCount
-    )
 
-    return buildSortedResults(similarities: rawSimilarities, ids: ids, topK: topK)
+      return buildSortedResults(similarities: rawSimilarities, ids: ids, topK: topK)
     #else
-    throw AuraError.metalUnavailable(
-      reason: "Metal framework is not available on this platform."
-    )
+      throw AuraError.metalUnavailable(
+        reason: "Metal framework is not available on this platform."
+      )
     #endif
   }
 
@@ -208,9 +196,9 @@ public actor MetalSearchEngine {
   /// The name of the Metal GPU device being used.
   public var deviceName: String {
     #if canImport(Metal)
-    return device.name
+      return device.name
     #else
-    return "Metal unavailable"
+      return "Metal unavailable"
     #endif
   }
 
@@ -219,199 +207,57 @@ public actor MetalSearchEngine {
     config.vectorDimension
   }
 
-  // MARK: - Private Helpers
-
-  #if canImport(Metal)
-
-  /// Validates the search input parameters.
-  private func validateSearchInputs(
+  /// Performs GPU-accelerated cosine similarity search over a pre-flattened vector buffer.
+  ///
+  /// Eliminates the `[[Float]]` → `[Float]` flattening copy on the hot path when
+  /// the caller already maintains embeddings in a contiguous float buffer.
+  ///
+  /// - Parameters:
+  ///   - query: The query embedding vector (`vectorDimension` floats).
+  ///   - flatVectors: Contiguous array of `ids.count * vectorDimension` floats.
+  ///   - ids: The UUIDs corresponding to each vector.
+  ///   - topK: Maximum number of results to return. Default: `10`. Must be `>= 0`.
+  /// - Returns: An array of ``VectorSearchResult`` sorted by descending similarity.
+  /// - Throws: ``AuraError/vectorSearchFailed(reason:)`` if validation or dispatch fails.
+  public func search(
     query: [Float],
-    vectors: [[Float]],
-    ids: [UUID]
-  ) throws {
-    guard query.count == config.vectorDimension else {
-      throw AuraError.vectorSearchFailed(
-        reason: "Query vector dimension \(query.count) does not match "
-          + "configured dimension \(config.vectorDimension)."
-      )
-    }
-    guard vectors.count == ids.count else {
-      throw AuraError.vectorSearchFailed(
-        reason: "Vector count (\(vectors.count)) does not match ID count (\(ids.count))."
-      )
-    }
-  }
+    flatVectors: [Float],
+    ids: [UUID],
+    topK: Int = 10
+  ) async throws -> [VectorSearchResult] {
+    #if canImport(Metal)
+      let signpostID = SignpostLogger.beginMetalSearch(vectorCount: ids.count)
+      defer { SignpostLogger.endMetalSearch(signpostID) }
 
-  /// Flattens 2D vectors into a contiguous 1D float array for GPU upload.
-  private func flattenVectors(
-    _ vectors: [[Float]],
-    count vectorCount: Int
-  ) throws -> [Float] {
-    let dimension = config.vectorDimension
-    var flat = [Float]()
-    flat.reserveCapacity(vectorCount * dimension)
-
-    for i in 0..<vectorCount {
-      let vec = vectors[i]
-      guard vec.count == dimension else {
+      guard topK >= 0 else {
+        throw AuraError.vectorSearchFailed(reason: "topK must be >= 0 (got \(topK)).")
+      }
+      guard query.count == config.vectorDimension else {
         throw AuraError.vectorSearchFailed(
-          reason: "Memory vector at index \(i) has dimension \(vec.count), "
-            + "expected \(dimension)."
+          reason: "Query vector dimension \(query.count) does not match "
+            + "configured dimension \(config.vectorDimension)."
         )
       }
-      flat.append(contentsOf: vec)
-    }
-    return flat
-  }
-
-  /// Creates Metal buffers, dispatches the compute kernel, and returns raw similarity scores.
-  private func dispatchComputeKernel(
-    query: [Float],
-    flatVectors: [Float],
-    vectorCount: Int
-  ) async throws -> [Float] {
-    let dimension = config.vectorDimension
-    let buffers = try createMetalBuffers(
-      query: query,
-      flatVectors: flatVectors,
-      vectorCount: vectorCount,
-      dimension: dimension
-    )
-
-    try await encodeAndSubmit(buffers: buffers, vectorCount: vectorCount)
-
-    return readBackResults(
-      from: buffers.results,
-      count: vectorCount
-    )
-  }
-
-  /// Allocates the four Metal buffers required by the cosine similarity kernel.
-  private func createMetalBuffers(
-    query: [Float],
-    flatVectors: [Float],
-    vectorCount: Int,
-    dimension: Int
-  ) throws -> MetalBuffers {
-    guard let queryBuf = device.makeBuffer(
-      bytes: query,
-      length: dimension * MemoryLayout<Float>.stride,
-      options: .storageModeShared
-    ) else {
-      throw AuraError.vectorSearchFailed(reason: "Failed to create query MTLBuffer.")
-    }
-
-    guard let memoryBuf = device.makeBuffer(
-      bytes: flatVectors,
-      length: vectorCount * dimension * MemoryLayout<Float>.stride,
-      options: .storageModeShared
-    ) else {
-      throw AuraError.vectorSearchFailed(reason: "Failed to create memory vectors MTLBuffer.")
-    }
-
-    guard let resultsBuf = device.makeBuffer(
-      length: vectorCount * MemoryLayout<Float>.stride,
-      options: .storageModeShared
-    ) else {
-      throw AuraError.vectorSearchFailed(reason: "Failed to create results MTLBuffer.")
-    }
-
-    var params = (UInt32(dimension), UInt32(vectorCount))
-    guard let paramsBuf = device.makeBuffer(
-      bytes: &params,
-      length: MemoryLayout.size(ofValue: params),
-      options: .storageModeShared
-    ) else {
-      throw AuraError.vectorSearchFailed(reason: "Failed to create params MTLBuffer.")
-    }
-
-    return MetalBuffers(
-      query: queryBuf,
-      memory: memoryBuf,
-      results: resultsBuf,
-      params: paramsBuf
-    )
-  }
-
-  /// Encodes the compute command and submits it to the GPU.
-  ///
-  /// Completion is awaited via `addCompletedHandler` + a checked continuation
-  /// instead of `waitUntilCompleted()`, which would block a Swift Concurrency
-  /// cooperative-pool thread for the full GPU round-trip.
-  private func encodeAndSubmit(buffers: MetalBuffers, vectorCount: Int) async throws {
-    guard let commandBuffer = commandQueue.makeCommandBuffer(),
-          let encoder = commandBuffer.makeComputeCommandEncoder() else {
-      throw AuraError.vectorSearchFailed(
-        reason: "Failed to create Metal command buffer or encoder."
-      )
-    }
-
-    encoder.setComputePipelineState(pipelineState)
-    encoder.setBuffer(buffers.query, offset: 0, index: 0)
-    encoder.setBuffer(buffers.memory, offset: 0, index: 1)
-    encoder.setBuffer(buffers.results, offset: 0, index: 2)
-    encoder.setBuffer(buffers.params, offset: 0, index: 3)
-
-    let tgSize = MTLSize(
-      width: min(config.threadgroupSize, pipelineState.maxTotalThreadsPerThreadgroup),
-      height: 1,
-      depth: 1
-    )
-    encoder.dispatchThreads(
-      MTLSize(width: vectorCount, height: 1, depth: 1),
-      threadsPerThreadgroup: tgSize
-    )
-    encoder.endEncoding()
-
-    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-      commandBuffer.addCompletedHandler { completed in
-        if let error = completed.error {
-          continuation.resume(throwing: AuraError.vectorSearchFailed(
-            reason: "Metal compute command failed: \(error.localizedDescription)"
-          ))
-        } else {
-          continuation.resume()
-        }
+      let expectedFloats = ids.count * config.vectorDimension
+      guard flatVectors.count == expectedFloats else {
+        throw AuraError.vectorSearchFailed(
+          reason: "Flattened vector float count (\(flatVectors.count)) does not match "
+            + "ids.count * dimension (\(expectedFloats))."
+        )
       }
-      commandBuffer.commit()
-    }
-  }
+      guard !ids.isEmpty, topK > 0 else { return [] }
 
-  /// Reads raw float similarity scores back from the GPU results buffer.
-  private func readBackResults(from buffer: MTLBuffer, count: Int) -> [Float] {
-    let pointer = buffer.contents().bindMemory(to: Float.self, capacity: count)
-    return Array(UnsafeBufferPointer(start: pointer, count: count))
-  }
-
-  #endif
-
-  /// Pairs raw similarity scores with UUIDs, sorts, and returns the top-K results.
-  private func buildSortedResults(
-    similarities: [Float],
-    ids: [UUID],
-    topK: Int
-  ) -> [VectorSearchResult] {
-    let results = zip(ids, similarities)
-      .map { VectorSearchResult(id: $0, similarity: $1) }
-      .sorted()
-    Self.logger.info(
-      "[AuraKit] MetalSearchEngine: Search completed — \(similarities.count) vectors, top-\(topK) returned."
-    )
-    return Array(results.prefix(topK))
+      let vectorCount = clampVectorCount(ids.count)
+      let rawSimilarities = try await dispatchComputeKernel(
+        query: query,
+        flatVectors: flatVectors,
+        vectorCount: vectorCount
+      )
+      return buildSortedResults(similarities: rawSimilarities, ids: ids, topK: topK)
+    #else
+      throw AuraError.metalUnavailable(
+        reason: "Metal framework is not available on this platform."
+      )
+    #endif
   }
 }
-
-// MARK: - MetalBuffers
-
-#if canImport(Metal)
-/// Internal container for the four MTLBuffers used by a single search dispatch.
-///
-/// Groups the query, memory, results, and params buffers into a single
-/// value to reduce parameter passing between helper methods.
-private struct MetalBuffers {
-  let query: MTLBuffer
-  let memory: MTLBuffer
-  let results: MTLBuffer
-  let params: MTLBuffer
-}
-#endif

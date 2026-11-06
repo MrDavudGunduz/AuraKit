@@ -301,4 +301,43 @@ struct MetalSearchEngineTests {
     let name = await engine.deviceName
     #expect(!name.isEmpty)
   }
+
+  @Test("Contiguous flatVectors overload produces identical results to 2D vectors")
+  func flatVectorsOverloadMatches2DSearch() async throws {
+    guard let engine = makeEngine(dimension: 4) else { return }
+
+    let query: [Float] = [1.0, 0.0, 0.0, 0.0]
+    let vectors: [[Float]] = [
+      [0.0, 1.0, 0.0, 0.0],
+      [1.0, 0.0, 0.0, 0.0],
+      [1.0, 1.0, 0.0, 0.0],
+      [-1.0, 0.0, 0.0, 0.0]
+    ]
+    let flatVectors = vectors.flatMap { $0 }
+    let ids = (0..<vectors.count).map { _ in UUID() }
+
+    let results2D = try await engine.search(query: query, vectors: vectors, ids: ids, topK: 2)
+    let resultsFlat = try await engine.search(
+      query: query,
+      flatVectors: flatVectors,
+      ids: ids,
+      topK: 2
+    )
+
+    #expect(resultsFlat == results2D)
+  }
+
+  @Test("Contiguous flatVectors count mismatch throws vectorSearchFailed")
+  func flatVectorsCountMismatchThrows() async throws {
+    guard let engine = makeEngine(dimension: 4) else { return }
+
+    await #expect(throws: AuraError.self) {
+      _ = try await engine.search(
+        query: [1.0, 0.0, 0.0, 0.0],
+        flatVectors: [1.0, 0.0, 0.0],
+        ids: [UUID()],
+        topK: 1
+      )
+    }
+  }
 }

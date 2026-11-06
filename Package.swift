@@ -19,7 +19,7 @@ let package = Package(
   dependencies: [
     // 📚 Apple DocC: For generating professional framework documentation.
     // Command plugin only — never runs as part of a consumer's build.
-    .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.3.0"),
+    .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.3.0")
 
     // NOTE: SwiftLint is intentionally NOT a package dependency.
     // SPM resolves plugin dependencies for every consumer of this library,
@@ -34,7 +34,8 @@ let package = Package(
       dependencies: [],
       path: "Sources/AuraKit",
       resources: [
-        .process("PrivacyInfo.xcprivacy")
+        .process("PrivacyInfo.xcprivacy"),
+        .copy("Metal/cosine_similarity.metal"),
       ]
     ),
     // 🧪 Test Target — Swift Testing framework
