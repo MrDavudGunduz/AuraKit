@@ -102,6 +102,10 @@ public actor IntelligenceActor {
     self._compressionContinuation = continuation
   }
 
+  deinit {
+    _compressionContinuation.finish()
+  }
+
   // MARK: - Public API — Phase 3 Evaluation
 
   /// Evaluates a batch of spatial events using the on-device LLM and Survival Index formula.

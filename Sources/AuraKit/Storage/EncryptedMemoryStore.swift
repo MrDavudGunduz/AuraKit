@@ -287,6 +287,10 @@ public actor EncryptedMemoryStore: SpatialEventStore {
   public func batchAppend(_ events: [SpatialEvent]) async {
     guard !events.isEmpty else { return }
 
+    // Drain retry queue first so previously failed events are persisted in
+    // chronological order before the new batch is written.
+    await drainRetryQueue()
+
     let signpostID = SignpostLogger.beginBatchEncrypt(count: events.count)
     defer { SignpostLogger.endBatchEncrypt(signpostID) }
 
