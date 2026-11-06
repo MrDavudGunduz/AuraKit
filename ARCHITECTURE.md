@@ -45,12 +45,12 @@ AuraKit is built on a **strict Actor-isolation model** enforced by Swift 6's Str
 │  │    SwiftData + Secure Enclave keys + Keychain             │   │
 │  │    RawMemoryNode  ◄──────────►  MemoryArchiveNode         │   │
 │  └────────────────────────────┬──────────────────────────────┘   │
-│                               │ CloudKit E2EE                    │
+│                               │ Local-only SQLite (No Sync)      │
 └───────────────────────────────┼──────────────────────────────────┘
                                 │
 ┌───────────────────────────────▼──────────────────────────────────┐
 │                       LAYER 4: SEARCH                            │
-│                     Metal Search Layer                            │
+│                     MetalSearchEngine                            │
 │          GPU Cosine Similarity via MTLComputePipelineState        │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -66,29 +66,18 @@ AuraKit is built on a **strict Actor-isolation model** enforced by Swift 6's Str
 ```swift
 public actor CaptureActor {
     private let config: AuraConfiguration
-    private let buffer: RingBuffer<SpatialEvent>
+    private var buffer: RingBuffer<SpatialEvent>
     private let router: HeuristicRouter
-    private let store: any SpatialEventStore
+    let store: any SpatialEventStore
 
     public func record(event: SpatialEvent) async {
         let decision = router.route(event, config: config)
 
-        let score: Double
         switch decision {
-        case .directStore(let routedScore): score = routedScore
-        case .enqueueBuffer(let routedScore): score = routedScore
-        }
-
-        let scored = SpatialEvent(
-            id: event.id, timestamp: event.timestamp,
-            kind: event.kind, score: score
-        )
-
-        switch decision {
-        case .directStore:
-            await store.append(scored)      // High-signal → persistent memory
-        case .enqueueBuffer:
-            await buffer.enqueue(scored)    // Low-signal → L1 ring buffer
+        case .directStore(let score):
+            await store.append(event.withScore(score))      // High-signal → persistent memory
+        case .enqueueBuffer(let score):
+            buffer.enqueue(event.withScore(score))          // Low-signal → L1 ring buffer (sync)
         }
     }
 }
@@ -202,13 +191,14 @@ public protocol SpatialEventStore: Actor {
 
 ```swift
 @Model
-final class RawMemoryNode {
-    @Attribute(.unique) var id: UUID
-    var encryptedPayload: Data       // AES-GCM ciphertext (nonce ‖ ciphertext ‖ tag)
-    var score: Double                // Heuristic or Survival Index score
-    var timestamp: Date
-    var eventType: String            // SpatialEventType.rawValue (.gaze | .touch | .move)
-    var recalled: Int = 0            // Incremented by explicit recallAndFetchAll() — feeds SI(t) Rⁿ
+public final class RawMemoryNode {
+    @Attribute(.unique) public var id: UUID
+    public var encryptedPayload: Data       // AES-GCM ciphertext (nonce ‖ ciphertext ‖ tag), bound via AAD
+    public var score: Double                // Heuristic or Survival Index score
+    public var timestamp: Date
+    public var eventType: String            // SpatialEventType.rawValue (.gaze | .touch | .move | .pinch | .drag)
+    public var recalled: Int                // Incremented by explicit recallAndFetchAll() — feeds SI(t) Rⁿ
+    public var keyVersion: Int              // Tracks encryption key version for partial rotation migration
 }
 ```
 
@@ -216,42 +206,33 @@ final class RawMemoryNode {
 
 ```swift
 @Model
-final class MemoryArchiveNode {
-    @Attribute(.unique) var id: UUID
-    var encryptedSummary: Data       // LLM-generated semantic summary, encrypted
-    var createdAt: Date
-    var sourceNodeIDsData: Data      // JSON-encoded [UUID] — defensive try? encoding
+public final class MemoryArchiveNode {
+    @Attribute(.unique) public var id: UUID
+    public var encryptedSummary: Data       // LLM-generated semantic summary, AES-GCM encrypted (AAD-bound)
+    public var createdAt: Date
+    public var sourceNodeIDsData: Data      // JSON-encoded [UUID] — defensive encoding
 }
 ```
 
-> **Note:** `sourceNodeIDs` is stored as `Data` (JSON-encoded `[UUID]`) for SwiftData/CloudKit compatibility. A computed property provides type-safe access. Encoding uses defensive `try?` with `os.log` diagnostics to prevent production crashes.
+> **Note:** `sourceNodeIDs` is stored as `Data` (JSON-encoded `[UUID]`) with a `@Transient` in-memory cache (`decodedSourceNodeIDs`) for zero-allocation repeated reads.
 
 ---
 
 ## Dependency Injection — `AuraConfiguration`
 
-AuraKit uses a **value-type configuration** injected at startup. There are no singletons with mutable global state.
+AuraKit uses a **value-type configuration** injected at startup, composed of domain-specific sub-configurations (`CaptureConfiguration`, `StorageConfiguration`, `IntelligenceConfiguration`). There are no singletons with mutable global state.
 
 ```swift
 public struct AuraConfiguration: Sendable, Equatable {
-    /// Weight applied to passive gaze events (0.0–1.0).
-    public let gazeWeight: Double
-
-    /// Weight applied to active interactions. Bypasses LLM (always 1.0 by default).
-    public let interactionWeight: Double
-
-    /// Maximum number of frames the Ring Buffer holds before overwrite.
-    public let bufferCapacity: Int
-
-    /// Maximum events the MemoryStore retains (FIFO eviction at cap).
-    public let storeCapacity: Int
+    public let capture: CaptureConfiguration
+    public let storage: StorageConfiguration
+    public let intelligence: IntelligenceConfiguration
 
     public init(
-        interactionWeight: Double = 1.0,
-        gazeWeight: Double = 0.3,
-        bufferCapacity: Int = 512,
-        storeCapacity: Int = 10_000
-    ) throws { ... }
+        capture: CaptureConfiguration,
+        storage: StorageConfiguration,
+        intelligence: IntelligenceConfiguration
+    ) { ... }
 }
 ```
 
@@ -265,7 +246,7 @@ public struct AuraConfiguration: Sendable, Equatable {
 | All actor methods are `async`                         | Actor isolation                                 |
 | `SpatialEvent` and `AuraConfiguration` are `Sendable` | `Sendable` conformance required                 |
 | UI updates always on `@MainActor`                     | Explicit `@MainActor` annotation                |
-| LLM inference never on main thread                    | `Task(priority: .background)` + actor isolation |
+| LLM inference never on main thread                    | `IntelligenceActor` background isolation        |
 
 ---
 
@@ -275,40 +256,51 @@ public struct AuraConfiguration: Sendable, Equatable {
 
 ```metal
 // cosine_similarity.metal
-kernel void cosineSimilarity(
-    device const float* queryVector   [[ buffer(0) ]],
-    device const float* memoryVectors [[ buffer(1) ]],
-    device       float* scores        [[ buffer(2) ]],
-    constant     uint&  vectorDim     [[ buffer(3) ]],
-    uint gid [[ thread_position_in_grid ]])
-{
-    float dot = 0, qMag = 0, mMag = 0;
-    for (uint i = 0; i < vectorDim; i++) {
+struct CosineSimilarityParams {
+    uint dimension;
+    uint vectorCount;
+};
+
+kernel void cosine_similarity_kernel(
+    device const float* queryVector           [[buffer(0)]],
+    device const float* memoryVectors         [[buffer(1)]],
+    device float*       results               [[buffer(2)]],
+    constant CosineSimilarityParams& params   [[buffer(3)]],
+    uint gid [[thread_position_in_grid]]
+) {
+    if (gid >= params.vectorCount) { return; }
+    const uint dim = params.dimension;
+    const uint offset = gid * dim;
+
+    float dotProduct = 0.0f, queryMagnitudeSq = 0.0f, memoryMagnitudeSq = 0.0f;
+    for (uint i = 0; i < dim; i++) {
         float q = queryVector[i];
-        float m = memoryVectors[gid * vectorDim + i];
-        dot  += q * m;
-        qMag += q * q;
-        mMag += m * m;
+        float m = memoryVectors[offset + i];
+        dotProduct += q * m;
+        queryMagnitudeSq += q * q;
+        memoryMagnitudeSq += m * m;
     }
-    scores[gid] = dot / (sqrt(qMag) * sqrt(mMag) + 1e-8);
+    float denominator = sqrt(queryMagnitudeSq) * sqrt(memoryMagnitudeSq);
+    results[gid] = (denominator < 1e-8f) ? 0.0f : (dotProduct / denominator);
 }
 ```
 
-### Host-Side Dispatch
+### Non-Blocking Host-Side Dispatch
 
 ```swift
-func search(query: [Float], in memories: [MemoryArchiveNode]) async throws -> [UUID: Float] {
-    let commandBuffer = commandQueue.makeCommandBuffer()!
-    let encoder = commandBuffer.makeComputeCommandEncoder()!
-    // Bind buffers, set thread groups, dispatch
-    encoder.dispatchThreads(
-        MTLSizeMake(memories.count, 1, 1),
-        threadsPerThreadgroup: MTLSizeMake(64, 1, 1)
-    )
-    encoder.endEncoding()
+// MetalSearchEngine+Dispatch.swift
+// Uses addCompletedHandler + CheckedContinuation to avoid blocking the Swift Concurrency thread pool:
+try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+    commandBuffer.addCompletedHandler { completed in
+        if let error = completed.error {
+            continuation.resume(throwing: AuraError.vectorSearchFailed(
+                reason: "Metal compute command failed: \(error.localizedDescription)"
+            ))
+        } else {
+            continuation.resume()
+        }
+    }
     commandBuffer.commit()
-    commandBuffer.waitUntilCompleted()
-    return parseScores(from: scoresBuffer, nodeIDs: memories.map(\.id))
 }
 ```
 

@@ -47,25 +47,38 @@ AuraKit tests follow four principles:
 
 ```
 Tests/AuraKitTests/
-├── AuraKitTests.swift              ← Top-level bootstrap / smoke test
+├── Core/
+│   ├── RingBufferTests.swift         ← O(1) guarantees, overflow, edge cases
+│   ├── RingBufferBatchTests.swift    ← Batch enqueue and eviction semantics
+│   ├── RingBufferPropertyTests.swift ← Property-based ring invariants
+│   ├── HeuristicRouterTests.swift    ← Stateless routing and score assignment
+│   ├── CaptureActorTests.swift       ← Actor isolation, heuristic bypass routing
+│   └── CaptureActorBatchTests.swift  ← Batch ingestion pipeline tests
 │
-├── Capture/
-│   ├── RingBufferTests.swift       ← O(1) guarantees, overflow, edge cases
-│   └── CaptureActorTests.swift     ← Actor isolation, heuristic bypass routing
+├── Security/
+│   ├── EncryptionServiceTests.swift  ← AES-GCM round-trips, AAD, tamper detection
+│   ├── KeyManagerTests.swift         ← Secure Enclave / static key derivation
+│   ├── KeyRotationTests.swift        ← Versioned key rotation & salt management
+│   └── ZeroTrustTests.swift          ← Key clearing & ciphertext verification
 │
-├── Memory/
-│   ├── EncryptionTests.swift       ← AES-GCM round-trips, tamper detection
-│   └── MemoryActorTests.swift      ← Persist, query, prune, compress
-│
-├── Configuration/
-│   └── AuraConfigurationTests.swift ← Default values, weight clamping, Sendable
+├── Storage/
+│   ├── MemoryStoreTests.swift        ← In-memory FIFO bounded/unbounded store
+│   └── EncryptedMemoryStoreTests.swift ← Persist, query, pagination, retry queue
 │
 ├── Intelligence/
-│   └── SurvivalIndexTests.swift    ← SI formula, decay, recall multiplier
+│   ├── SurvivalIndexTests.swift      ← SI formula, log-space overflow, recall multiplier
+│   ├── IntelligenceActorTests.swift  ← Batch evaluation & pruning
+│   └── CognitiveCompressionTests.swift ← Archive creation & atomic source pruning
+│
+├── Metal/
+│   └── MetalSearchEngineTests.swift  ← GPU cosine similarity & top-K ordering
+│
+├── Integration/
+│   └── FullPipelineIntegrationTests.swift ← End-to-end capture → encrypt → decrypt
 │
 └── Helpers/
-    ├── MockMemoryStore.swift        ← In-memory SwiftData substitute
-    └── SpatialEventFactory.swift    ← Test data builders
+    ├── TestHelpers.swift             ← Shared test factories and fixtures
+    └── Tags.swift                    ← Swift Testing tag definitions and gates
 ```
 
 ---
@@ -352,18 +365,18 @@ struct RingBufferTests {
     func countGrowsWithWrites() {
         var buffer = RingBuffer<Int>(capacity: 4)
         #expect(buffer.count == 0)
-        buffer.write(1); #expect(buffer.count == 1)
-        buffer.write(2); #expect(buffer.count == 2)
-        buffer.write(3); buffer.write(4)
+        buffer.enqueue(1); #expect(buffer.count == 1)
+        buffer.enqueue(2); #expect(buffer.count == 2)
+        buffer.enqueue(3); buffer.enqueue(4)
         #expect(buffer.count == 4)
     }
 
     @Test("overwrites oldest entry when at capacity")
     func overwritesOldestOnFull() {
         var buffer = RingBuffer<Int>(capacity: 3)
-        buffer.write(1); buffer.write(2); buffer.write(3)
-        buffer.write(4)  // Evicts 1
-        let contents = buffer.readAll()
+        buffer.enqueue(1); buffer.enqueue(2); buffer.enqueue(3)
+        buffer.enqueue(4)  // Evicts 1
+        let contents = buffer.drainAll()
         #expect(contents == [2, 3, 4])
     }
 
@@ -371,16 +384,16 @@ struct RingBufferTests {
     func isEmptyBehavior() {
         var buffer = RingBuffer<String>(capacity: 2)
         #expect(buffer.isEmpty)
-        buffer.write("a")
+        buffer.enqueue("a")
         #expect(!buffer.isEmpty)
     }
 
-    @Test("write then readAll is idempotent for N in 1...capacity",
+    @Test("enqueue then drainAll returns N elements for N in 1...capacity",
           arguments: 1...8)
-    func writeAndReadAllParameterized(n: Int) {
+    func enqueueAndDrainAllParameterized(n: Int) {
         var buffer = RingBuffer<Int>(capacity: n)
-        for i in 0..<n { buffer.write(i) }
-        #expect(buffer.readAll().count == n)
+        for i in 0..<n { buffer.enqueue(i) }
+        #expect(buffer.drainAll().count == n)
     }
 }
 ```

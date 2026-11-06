@@ -26,12 +26,12 @@
 
 AuraKit is a **fully open-source Swift Package** (MIT) that gives your 3D/spatial applications a persistent, privacy-first memory layer. It captures user interactions (gaze, touch, spatial movement) using a race-free Actor pipeline, scores them with a heuristic bypass engine, and stores them in an on-device, Secure Enclave–derived-key encrypted SwiftData database.
 
-> **Project status: pre-1.0 / actively developed.** The capture pipeline,
-> encrypted storage, key management, and Metal search layers are implemented
-> and covered by tests. The on-device MLX compression layer is **not
-> implemented yet** — `MLXModelProvider` ships as a protocol + mock stub
-> with no `mlx-swift` dependency. Track progress in the [Features](#features)
-> table and [ROADMAP.md](https://github.com/MrDavudGunduz/AuraKit/blob/main/ROADMAP.md).
+> **v1.0.0 Architectural Status:** The capture pipeline, AES-GCM encrypted
+> storage, Secure Enclave key management (with versioned key rotation),
+> Survival Index engine, cognitive compression pipeline, and Metal GPU vector
+> search layers are fully implemented and covered by 395+ tests. Host applications
+> supply an `MLXModelProvider` conformance for on-device LLM inference
+> (a built-in `mlx-swift` adapter is tracked in [ROADMAP.md](https://github.com/MrDavudGunduz/AuraKit/blob/main/ROADMAP.md)).
 
 | Layer        | Technology                    | Description                                  | Status |
 | ------------ | ----------------------------- | -------------------------------------------- | ------ |
@@ -114,13 +114,11 @@ import AuraKit
 
 // Configure once at app launch from a @MainActor context
 // (e.g., .task modifier on your root WindowGroup).
-let config = try AuraConfiguration(
+try AuraKit.shared.configure(
     interactionWeight: 1.0,   // Touch/Move → bypasses LLM, goes directly to persistent store
     gazeWeight: 0.3,          // Passive gaze → low-weight L1 buffer
     bufferCapacity: 512       // Ring Buffer frame capacity
 )
-
-AuraKit.shared.configure(with: config)
 ```
 
 ### 2. Capture Spatial Events

@@ -76,12 +76,16 @@ func decrypt(_ combined: Data, using key: SymmetricKey) throws -> Data {
 }
 ```
 
-### Key Storage
+### Key Storage (No Raw Key Persistence)
 
-The derived `SymmetricKey` is stored in the **iOS Keychain** with:
+Derived `SymmetricKey` values are **never written to the Keychain or disk**. They exist only in actor-isolated process memory while in use and are wiped on background transitions via `AuraKitLifecycleObserver` / `KeyManager.clearCachedKeyForBackground()`.
 
-- `kSecAttrAccessible`: `.whenUnlockedThisDeviceOnly` — key not available when device is locked or backed up to iCloud (unencrypted)
-- `kSecAttrAccessControl` with `.biometryCurrentSet` for high-sensitivity deployments
+Only the following non-secret or hardware-bound items are stored in the **Keychain**:
+
+- `se-key-ref`: Opaque reference to the non-extractable Secure Enclave P256 private key
+- `hkdf-salt.v{version}`: 32-byte random HKDF salt per key version
+- `key-version`: Current monotonically increasing key version counter
+- All items use `kSecAttrAccessible: .whenUnlockedThisDeviceOnly` and `kSecAttrSynchronizable: false` — never backed up or synced to iCloud
 
 ---
 
@@ -177,14 +181,6 @@ As required by App Store Review Guidelines (updated 2024), AuraKit includes a `P
     <array>
         <dict>
             <key>NSPrivacyAccessedAPIType</key>
-            <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
-            <key>NSPrivacyAccessedAPITypeReasons</key>
-            <array>
-                <string>CA92.1</string> <!-- Framework configuration storage -->
-            </array>
-        </dict>
-        <dict>
-            <key>NSPrivacyAccessedAPIType</key>
             <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
             <key>NSPrivacyAccessedAPITypeReasons</key>
             <array>
@@ -207,10 +203,8 @@ As required by App Store Review Guidelines (updated 2024), AuraKit includes a `P
 ### Validating the Manifest
 
 ```bash
-# Validate before App Store submission (Xcode 15+)
-xcodebuild -validatePrivacyManifest \
-    -scheme AuraKit \
-    -destination 'platform=iOS Simulator,name=iPhone 15 Pro'
+# Validate syntax and required keys (as run in CI)
+plutil -lint Sources/AuraKit/PrivacyInfo.xcprivacy
 ```
 
 ---
@@ -219,12 +213,12 @@ xcodebuild -validatePrivacyManifest \
 
 Before shipping an app that uses AuraKit, verify:
 
-- [ ] `AuraConfiguration` does not expose raw symmetric keys to the host app
-- [ ] `RawMemoryNode.encryptedPayload` is never logged (ensure `os_log` categories are private)
-- [ ] SwiftData store file is excluded from iCloud backup unless CloudKit E2EE is configured
-- [ ] App entitlements do not include `com.apple.security.network.client` in the Intelligence module
-- [ ] Keychain item accessibility is set to `.whenUnlockedThisDeviceOnly` (not `.always`)
-- [ ] Instruments → Leaks run confirms no symmetric key material is retained beyond `MemoryActor` closure scope
+- [ ] `AuraConfiguration` and `KeyManager` never expose raw symmetric keys to the host app
+- [ ] `RawMemoryNode.encryptedPayload` is never logged
+- [ ] `AuraKit.shared.startLifecycleObserver()` is called at launch so cached keys are wiped on background transitions
+- [ ] App entitlements set `com.apple.security.network.client` to `false` when running offline on-device LLM inference
+- [ ] Keychain item accessibility remains `.whenUnlockedThisDeviceOnly` (enforced by `KeychainHelper`)
+- [ ] Instruments → Leaks run confirms no symmetric key material is retained after `clearCachedKeyForBackground()`
 
 ---
 
