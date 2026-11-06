@@ -23,15 +23,16 @@ extension AuraKit {
     try shared.configure(with: config)
   }
 
-  /// Convenience static wrapper for ``configure(with:store:)``.
+  /// Convenience static wrapper for ``configure(with:store:modelProvider:)``.
   ///
-  /// Equivalent to `try AuraKit.shared.configure(with: config, store: store)`.
+  /// Equivalent to `try AuraKit.shared.configure(with: config, store: store, modelProvider: modelProvider)`.
   /// - Throws: ``AuraError/alreadyConfigured`` if the pipeline is already active.
   public static func configure(
     with config: AuraConfiguration,
-    store: (any SpatialEventStore)?
+    store: (any SpatialEventStore)?,
+    modelProvider: (any MLXModelProvider)? = nil
   ) throws {
-    try shared.configure(with: config, store: store)
+    try shared.configure(with: config, store: store, modelProvider: modelProvider)
   }
 
   /// Convenience static wrapper for the throwing ``configure(interactionWeight:gazeWeight:bufferCapacity:storeCapacity:)`` overload.
@@ -74,15 +75,16 @@ extension AuraKit {
     shared.configureIfNeeded(with: config)
   }
 
-  /// Convenience static wrapper for ``configureIfNeeded(with:store:)``.
+  /// Convenience static wrapper for ``configureIfNeeded(with:store:modelProvider:)``.
   ///
-  /// Configures the pipeline with an optional custom store only if it
-  /// has not been configured yet.
+  /// Configures the pipeline with an optional custom store and model provider
+  /// only if it has not been configured yet.
   public static func configureIfNeeded(
     with config: AuraConfiguration,
-    store: (any SpatialEventStore)?
+    store: (any SpatialEventStore)?,
+    modelProvider: (any MLXModelProvider)? = nil
   ) {
-    shared.configureIfNeeded(with: config, store: store)
+    shared.configureIfNeeded(with: config, store: store, modelProvider: modelProvider)
   }
 
   /// Convenience static wrapper for ``memory``\.
@@ -136,4 +138,3 @@ extension AuraKit {
     )
   }
 }
-
