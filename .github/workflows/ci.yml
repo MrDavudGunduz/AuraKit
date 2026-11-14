@@ -260,12 +260,25 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      - name: Ensure iOS Simulator destination
+        run: |
+          if ! xcrun simctl list runtimes | grep -q "iOS"; then
+            xcodebuild -downloadPlatform iOS
+          fi
+          IOS_SIM_ID=$(xcrun simctl list devices available | grep -E "iPhone " | head -1 | sed -E 's/.*\(([0-9A-F-]+)\).*/\1/')
+          if [ -z "$IOS_SIM_ID" ]; then
+            echo "::error::No available iPhone simulator device found."
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "IOS_DEST=platform=iOS Simulator,id=${IOS_SIM_ID}" >> "$GITHUB_ENV"
+
       - name: Build for iOS Simulator
         run: |
           set -o pipefail
           xcodebuild build-for-testing \
             -scheme "${{ matrix.scheme }}" \
-            -destination "${{ matrix.destination }}" \
+            -destination "$IOS_DEST" \
             -skipPackagePluginValidation \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
@@ -276,7 +289,7 @@ jobs:
           set -o pipefail
           xcodebuild test \
             -scheme "${{ matrix.scheme }}" \
-            -destination "${{ matrix.destination }}" \
+            -destination "$IOS_DEST" \
             -skipPackagePluginValidation \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
@@ -304,14 +317,20 @@ jobs:
             xcodebuild -downloadPlatform visionOS
           fi
           xcodebuild -resolvePackageDependencies -scheme AuraKit
-          xcodebuild -showdestinations -scheme AuraKit
+          VISIONOS_SIM_ID=$(xcrun simctl list devices available | grep -E "Apple Vision" | head -1 | sed -E 's/.*\(([0-9A-F-]+)\).*/\1/')
+          if [ -z "$VISIONOS_SIM_ID" ]; then
+            echo "::error::No available Apple Vision simulator device found."
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "VISIONOS_DEST=platform=visionOS Simulator,id=${VISIONOS_SIM_ID}" >> "$GITHUB_ENV"
 
       - name: Build for visionOS Simulator
         run: |
           set -o pipefail
           xcodebuild build-for-testing \
             -scheme AuraKit \
-            -destination "platform=visionOS Simulator,name=Apple Vision Pro" \
+            -destination "$VISIONOS_DEST" \
             -skipPackagePluginValidation \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
@@ -322,7 +341,7 @@ jobs:
           set -o pipefail
           xcodebuild test \
             -scheme AuraKit \
-            -destination "platform=visionOS Simulator,name=Apple Vision Pro" \
+            -destination "$VISIONOS_DEST" \
             -skipPackagePluginValidation \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
