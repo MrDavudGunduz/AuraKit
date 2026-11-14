@@ -43,7 +43,8 @@ public enum CosineSimilarity {
 
     guard magnitudeA > 0, magnitudeB > 0 else { return nil }
 
-    return dot / (magnitudeA * magnitudeB)
+    let score = dot / (magnitudeA * magnitudeB)
+    return score.isFinite ? score : nil
   }
 
   /// Ranks candidates by cosine similarity to a query vector (descending).
@@ -64,6 +65,10 @@ public enum CosineSimilarity {
     candidates: [(id: ID, vector: [Float])],
     limit: Int? = nil
   ) -> [(id: ID, similarity: Float)] {
+    if let limit, limit <= 0 {
+      return []
+    }
+
     let scored = candidates.compactMap { candidate -> (id: ID, similarity: Float)? in
       guard let score = similarity(query, candidate.vector) else { return nil }
       return (candidate.id, score)
@@ -77,7 +82,7 @@ public enum CosineSimilarity {
     // Partial selection: extract top-k without fully sorting.
     // Uses a min-heap of size k — O(n + k log k) vs O(n log n).
     var heap = Array(scored.prefix(limit))
-    heap.sort { $0.similarity < $1.similarity } // min-heap by ascending
+    heap.sort { $0.similarity < $1.similarity }  // min-heap by ascending
 
     for i in limit..<scored.count {
       if scored[i].similarity > heap[0].similarity {

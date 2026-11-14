@@ -163,4 +163,23 @@ struct CosineSimilarityTests {
     let ranked = CosineSimilarity.rank(query: query, candidates: candidates, limit: 100)
     #expect(ranked.count == 2)
   }
+
+  @Test("rank with zero or negative limit returns empty array without crashing")
+  func rankNonPositiveLimit() {
+    let query: [Float] = [1, 0]
+    let candidates: [(id: Int, vector: [Float])] = [
+      (0, [1, 0]),
+      (1, [0, 1]),
+    ]
+
+    #expect(CosineSimilarity.rank(query: query, candidates: candidates, limit: 0).isEmpty)
+    #expect(CosineSimilarity.rank(query: query, candidates: candidates, limit: -5).isEmpty)
+  }
+
+  @Test("similarity rejects infinite vectors safely")
+  func infiniteVectorsReturnNil() {
+    let vecA: [Float] = [.infinity, 1.0]
+    let vecB: [Float] = [1.0, 1.0]
+    #expect(CosineSimilarity.similarity(vecA, vecB) == nil)
+  }
 }

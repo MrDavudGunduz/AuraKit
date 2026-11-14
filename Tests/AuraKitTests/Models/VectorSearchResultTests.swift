@@ -43,6 +43,19 @@ struct VectorSearchResultTests {
     #expect(results[2].similarity == -0.5)
   }
 
+  @Test("Comparable treats NaN as lowest priority without violating strict weak ordering")
+  func comparableNaNOrdering() {
+    let validHigh = VectorSearchResult(id: UUID(), similarity: 0.9)
+    let validLow = VectorSearchResult(id: UUID(), similarity: 0.2)
+    let nanResult = VectorSearchResult(id: UUID(), similarity: .nan)
+
+    let sorted = [nanResult, validLow, validHigh, nanResult].sorted()
+    #expect(sorted[0].id == validHigh.id)
+    #expect(sorted[1].id == validLow.id)
+    #expect(sorted[2].similarity.isNaN)
+    #expect(sorted[3].similarity.isNaN)
+  }
+
   // MARK: - Equatable
 
   @Test("Equatable matches on same id and similarity")

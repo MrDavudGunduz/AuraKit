@@ -75,8 +75,11 @@ extension VectorSearchResult: Comparable {
   /// let topResults = results.sorted().prefix(10)
   /// ```
   public static func < (lhs: VectorSearchResult, rhs: VectorSearchResult) -> Bool {
-    // Descending order: higher similarity = "less than" for sort-first behaviour
-    lhs.similarity > rhs.similarity
+    // Descending order: higher similarity = "less than" for sort-first behaviour.
+    // Treat NaN as lowest priority so non-finite scores never violate strict weak ordering.
+    if lhs.similarity.isNaN { return false }
+    if rhs.similarity.isNaN { return true }
+    return lhs.similarity > rhs.similarity
   }
 }
 
