@@ -298,6 +298,14 @@ jobs:
         with:
           xcode-version: latest-stable
 
+      - name: Ensure visionOS Simulator platform
+        run: |
+          if ! xcrun simctl list runtimes | grep -q "visionOS"; then
+            xcodebuild -downloadPlatform visionOS
+          fi
+          xcodebuild -resolvePackageDependencies -scheme AuraKit
+          xcodebuild -showdestinations -scheme AuraKit
+
       - name: Build for visionOS Simulator
         run: |
           set -o pipefail
